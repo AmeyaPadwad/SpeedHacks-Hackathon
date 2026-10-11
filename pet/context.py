@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QGuiApplication, QPixmap
 
-ACTIVE_FILE = Path(os.environ.get("FLOWSTATE_ACTIVE_FILE", Path.home() / ".flowstate_current.json"))
+ACTIVE_FILE = Path(os.environ.get("FLOWSTATE_ACTIVE_FILE") or Path.home() / ".flowstate_current.json")
 MAX_EDGE = 1280
 JPEG_QUALITY = 75
 MAX_FILE_CHARS = 12_000  # keep prompts bounded; the model gets the head of very large files

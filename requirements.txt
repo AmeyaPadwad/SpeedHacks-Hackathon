@@ -4,3 +4,4 @@ requests>=2.31
 keyboard>=0.13.5
 SpeechRecognition>=3.10
 pyaudio>=0.2.14
+python-dotenv>=1.0

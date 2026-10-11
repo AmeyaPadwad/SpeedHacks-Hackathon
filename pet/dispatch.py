@@ -10,7 +10,7 @@ import requests
 
 from .brain import Draft
 
-CONTACTS_FILE = Path(os.environ.get("FLOWSTATE_CONTACTS", Path.home() / ".flowstate_contacts.json"))
+CONTACTS_FILE = Path(os.environ.get("FLOWSTATE_CONTACTS") or Path.home() / ".flowstate_contacts.json")
 TIMEOUT_S = 10
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -76,7 +76,7 @@ def send_email(d: Draft, contact: dict):
     msg["Subject"] = d.subject or "Quick note"
     msg.set_content(d.message)
     try:
-        with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587")), timeout=TIMEOUT_S) as s:
+        with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT") or 587), timeout=TIMEOUT_S) as s:
             s.starttls()
             if os.environ.get("SMTP_USER"):
                 s.login(os.environ["SMTP_USER"], os.environ.get("SMTP_PASSWORD", ""))

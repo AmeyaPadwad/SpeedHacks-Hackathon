@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pet.brain import Brain, BrainError, build_messages, parse_draft
+from pet.brain import Brain, BrainError, build_messages, describe_openai_error, parse_draft
 from pet.context import ActiveFile, Context
 
 
@@ -62,8 +62,16 @@ def test_brain_uses_client_and_wraps_errors():
         raise TimeoutError()
 
     client.chat.completions.create = boom
-    with pytest.raises(BrainError, match="TimeoutError"):
+    with pytest.raises(BrainError, match="timed out"):
         Brain(client).draft("hi", Context(None, None))
+
+
+def test_describe_quota_error():
+    class RateLimitError(Exception):
+        pass
+    e = RateLimitError("Error code: 429 - {'error': {'type': 'insufficient_quota'}}")
+    assert "no credits" in describe_openai_error(e)
+    assert "rate limit" in describe_openai_error(RateLimitError("slow down"))
 
 
 def test_brain_without_key(monkeypatch):

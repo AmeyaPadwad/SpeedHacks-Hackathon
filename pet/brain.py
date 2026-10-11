@@ -29,6 +29,23 @@ class BrainError(Exception):
     """Recoverable failure: show a short message, never retry automatically."""
 
 
+def describe_openai_error(e: Exception) -> str:
+    """Short user-facing reason for an OpenAI SDK failure; never includes the key or response body."""
+    name = type(e).__name__
+    text = str(e)
+    if "insufficient_quota" in text or "credit_balance_exhausted" in text:
+        return "OpenAI account has no credits. Add billing at platform.openai.com."
+    if name == "AuthenticationError":
+        return "OpenAI rejected the API key."
+    if name == "RateLimitError":
+        return "OpenAI rate limit hit. Wait a moment and try again."
+    if name in ("APITimeoutError", "TimeoutError"):
+        return "OpenAI timed out."
+    if name == "APIConnectionError":
+        return "Couldn't reach OpenAI. Check your connection."
+    return f"AI request failed: {name}"
+
+
 @dataclass(frozen=True)
 class Draft:
     platform: str
@@ -83,7 +100,7 @@ def build_messages(command: str, ctx: Context) -> list[dict]:
 class Brain:
     def __init__(self, client=None, model: str | None = None):
         self._client = client
-        self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
+        self.model = model or os.environ.get("OPENAI_MODEL") or "gpt-4o"
 
     @property
     def client(self):
@@ -105,5 +122,5 @@ class Brain:
         except BrainError:
             raise
         except Exception as e:  # network, auth, rate limit: all surface as one short recoverable error
-            raise BrainError(f"AI request failed: {type(e).__name__}") from e
+            raise BrainError(describe_openai_error(e)) from e
         return parse_draft(resp.choices[0].message.content)

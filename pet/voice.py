@@ -2,7 +2,7 @@
 import io
 import os
 
-HOTKEY = os.environ.get("FLOWSTATE_HOTKEY", "ctrl+shift+space")
+HOTKEY = os.environ.get("FLOWSTATE_HOTKEY") or "ctrl+shift+space"
 LISTEN_TIMEOUT_S = 6      # wait this long for speech to start
 PHRASE_LIMIT_S = 20       # hard cap on one command
 TRANSCRIBE_TIMEOUT_S = 20
@@ -61,7 +61,8 @@ def transcribe(wav: bytes, client=None) -> str:
     try:
         text = client.audio.transcriptions.create(model="whisper-1", file=f).text
     except Exception as e:
-        raise VoiceError(f"Transcription failed: {type(e).__name__}") from e
+        from .brain import describe_openai_error
+        raise VoiceError(describe_openai_error(e)) from e
     text = (text or "").strip()
     if not text:
         raise VoiceError("Couldn't make out any words.")

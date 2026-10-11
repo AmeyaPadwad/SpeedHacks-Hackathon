@@ -2,12 +2,18 @@
 import argparse
 import os
 import sys
+from pathlib import Path
 
-from PySide6.QtWidgets import QApplication
+from dotenv import load_dotenv
 
-from pet import voice
-from pet.pipeline import Pipeline
-from pet.ui import Overlay
+# Load before importing pet modules: they read settings at import time. Real env vars win over .env.
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from pet import voice  # noqa: E402
+from pet.pipeline import Pipeline  # noqa: E402
+from pet.ui import Overlay  # noqa: E402
 
 
 def main() -> int:
