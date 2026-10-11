@@ -18,9 +18,9 @@ ANIMATIONS = {
 }
 
 
-def asset_path(name: str) -> Path:
+def asset_path(name: str, folder: str = "assets") -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    return base / "assets" / name
+    return base / folder / name
 
 
 class SpriteSheet:
