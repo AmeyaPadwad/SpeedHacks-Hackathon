@@ -56,9 +56,12 @@ Try it on the included fixture: open `fixtures/buggy_app/dashboard.py` in VS Cod
 
 ## Coding input collector (macOS, Python 3.11 or 3.12)
 
-`--input-gathering` collects a coding task and its context for a teammate's Darwin integration:
-**hotkey → foreground-window screenshot → voice → local Whisper → relevant saved files → review → context packet**.
-This mode does not search Darwin, contact a provider, execute code, or dispatch messages.
+`--input-gathering` collects a coding task and feeds its reviewed context into the existing agent flow:
+**hotkey → foreground-window screenshot → voice → local Whisper → relevant saved files → review → agent → message draft → Send**.
+For example, say **"Send Sarah a Slack summary of how pet/inputs/macos.py works"**, review the
+inputs, and click **Use context**. Pette drafts the message; click **Send** to post it through your
+configured Slack/Discord webhook or SMTP account. A debugging request follows the existing
+analysis and coding-agent proposal flow instead. Darwin search remains a separate teammate integration.
 Pette is the main UI: the animated desktop pet listens while you speak, thinks during transcription
 and file selection, and opens a cream-and-mint review card from its speech bubble. The card has
 separate file/screenshot tabs and keeps approval/export buttons visible on smaller screens.
@@ -106,11 +109,25 @@ is available by explicitly setting `FLOWSTATE_INPUT_PROVIDER=openai` and `OPENAI
    Use `GROQ_API_KEY` for the default provider. Local speech transcription has no API fee;
    hosted file selection is subject to the chosen provider's account plan and quota.
 5. Review each selected excerpt and the screenshot (use **View screenshot at full size**).
-   Uncheck inputs you do not want included. **Use context** emits the reviewed packet once;
+   Uncheck inputs you do not want included. Under **Send the result to**, choose **Slack** or **Discord**
+   to draft a message, even when your task only says "explain this file". The optional person field
+   adds a recipient/mention; leave it blank to post directly to the webhook's configured channel.
+   **Let the agent decide** keeps the usual question/coding/message routing.
+   **Use context** passes the reviewed packet to the agent once,
+   hides the review card, and shows the draft/result in Pette. **Send** posts the reviewed message;
    if AI selection is enabled and the task/hints changed, it first runs selection again for review.
-   **Export JSON** saves it only after approval. Escape or **Cancel / New** cancels collection and
-   discards pending results. Closing the review card cancels collection and returns to Pette.
+   **Export JSON** remains available from the review card after approval. Escape or **Cancel / New**
+   cancels collection, discards any pending message and ignores late agent results. Closing the
+   review card cancels collection and returns to Pette. After a result is sent or dismissed, the
+   hotkey or **Type a task** starts a new request. During processing or a pending draft, the hotkey
+   leaves the current flow in place; use **Cancel collection** in the tray to discard it.
    Use the tray to review context, type a task, pause collection, or quit.
+
+The message preview also has a **Send via** Slack/Discord selector. Switching it changes the
+destination of the same draft without another AI request. An unconfigured channel disables Send
+and shows a setup hint. A failed post keeps the draft and displays its error alongside **Retry**;
+you can switch channels before trying again. Each retry requires a fresh click. Webhooks post to
+their configured channel, rather than opening a direct message to the named person.
 
 **macOS permissions:** enable Microphone, Screen Recording, and Input Monitoring for the terminal/app
 launching FlowState in System Settings → Privacy & Security; Accessibility may also be required by
@@ -151,16 +168,21 @@ and screenshots may still contain sensitive material, so review them. Saved file
 collection; excerpts show the bytes read, with line ranges and truncation notices. Unsaved editor
 buffers, terminal output/history, live terminal cwd, browser DOM, and automatic OCR are not collected.
 
-**Data lifecycle:** the screenshot stays local until packet handoff/export. The selected AI provider receives the task,
+**Data lifecycle:** the screenshot stays local until **Use context** or explicit export. The selected AI provider receives the task,
 hints, project paths and bounded excerpts only after opting into file selection; it does not receive
-the audio or screenshot. `whisper-cli` uses a private temporary directory for audio and transcript,
+the audio or screenshot during file selection. **Use context** sends the final task, checked file excerpts
+and checked screenshot to the Groq drafting agent. Screenshots are converted to a bounded JPEG;
+the agent receives a fair excerpt budget across every checked file, with truncation labelled.
+If `GROQ_MODEL` selects text-only GPT-OSS, screenshot requests use `GROQ_VISION_MODEL` instead
+(default `qwen/qwen3.8-27b`). The coding analyst and CLI adapters receive the checked file excerpts,
+with their original path/line-range headers, and no screenshot. `whisper-cli` uses a private temporary directory for audio and transcript,
 deleted after success, failure, or cancellation. Packets stay in memory until explicit export, which
 contains selected source and raw-base64 PNG bytes. No input content or keys are logged. Exporting or
 handing off a packet does not itself upload context to Darwin.
 
 ### Teammate handoff
 
-The modules in `pet/inputs/` are independent of the messaging pipeline. `CollectionService` exposes
+`CollectionService` can still be used independently of the messaging pipeline. It exposes
 `progress`, `changed`, `error`, and `packet_ready` Qt signals; hotkey events enter through
 `hotkey_pressed`, and cancellation through `cancel_pressed`. All signals delivered to the UI use Qt's
 main thread. `approve()` is single-use for the session, and cancellation invalidates late workers.
@@ -229,6 +251,7 @@ All settings are environment variables. See [.env.example](.env.example).
 |---|---|
 | `GROQ_API_KEY` | Used for messaging transcription, drafting, analysis and opt-in input file selection on [Groq](https://console.groq.com). Input mode transcribes locally. |
 | `GROQ_MODEL` | Drafting model (must accept images), default `qwen/qwen3.8-27b`. |
+| `GROQ_VISION_MODEL` | Screenshot drafting model when `GROQ_MODEL` selects text-only GPT-OSS; default `qwen/qwen3.8-27b`. |
 | `GROQ_TEXT_MODEL` | Analysis model, default `openai/gpt-oss-120b`. |
 | `GROQ_STT_MODEL` | Transcription model, default `whisper-large-v3-turbo`. |
 | `FLOWSTATE_INPUT_PROVIDER` | File-selection provider: `groq` (default) or `openai`. |

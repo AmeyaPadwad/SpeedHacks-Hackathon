@@ -21,7 +21,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--camera", action="store_true", help="turn on the webcam (local face/eyes/pinch) at launch")
     ap.add_argument("--always-show", action="store_true",
                     help="show Pette over every app, not only VS Code and terminals")
-    ap.add_argument("--input-gathering", action="store_true", help="macOS coding input collector; emits reviewed context for Darwin")
+    ap.add_argument("--input-gathering", action="store_true", help="macOS voice/context collector connected to the agent and messaging flow")
     ap.add_argument("--project", type=Path, default=Path.cwd(), help="project directory for input gathering (default: launch directory)")
     args = ap.parse_args(argv)
     if args.input_gathering:
@@ -46,7 +46,7 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
         ctx.shutdown = shutdown
         return ctx
 
-    # Input mode must run with requirements-input.txt alone.
+    # Companion mode adds webcam, IDE watchers and memory to the shared agent/messaging flow.
     from db import Store, WorldModel
     from pet import agents, llm, voice
     from pet.analyst import LocalAnalyst

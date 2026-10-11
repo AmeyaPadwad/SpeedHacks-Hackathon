@@ -1,4 +1,4 @@
-"""Qt collection service; UI-free packet callback for the Darwin teammate."""
+"""Qt collection service; approved packets feed the agent flow or a standalone consumer."""
 import threading
 import time
 from pathlib import Path
@@ -263,7 +263,8 @@ class CollectionService(QObject):
 
         self._work(read, done)
 
-    def approve(self, task: str, included_files=None, *, include_screenshot=True):
+    def approve(self, task: str, included_files=None, *, include_screenshot=True,
+                message_platform="", message_recipient=""):
         if self.state not in {"editing", "reviewing"} or not task.strip():
             return None
         allowed = set(range(len(self.files))) if included_files is None else set(included_files)
@@ -282,7 +283,8 @@ class CollectionService(QObject):
             screenshot_png=self.snapshot.png if include_screenshot else None,
             warnings=tuple(warnings), session_id=self.session_id, captured_at=self.captured_at,
             file_selection_status=status, file_selection_model=self.file_selection_model,
-            file_selection_provider=self.file_selection_provider)
+            file_selection_provider=self.file_selection_provider,
+            message_platform=message_platform, message_recipient=message_recipient.strip()[:200])
         self._state("ready")
         self.packet_ready.emit(self.packet)
         return self.packet

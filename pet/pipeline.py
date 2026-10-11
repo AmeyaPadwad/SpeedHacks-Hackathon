@@ -37,7 +37,7 @@ class Pipeline(QObject):
                  record=voice.record_until_silence, transcribe=voice.transcribe, send=dispatch.dispatch,
                  configured=dispatch.configured, analyst: Analyst | None = None, pick_agent=agents.pick_agent,
                  copy_text=None, show_result=None, use_voice=True, spawn=_thread,
-                 capture_delay_ms=CAPTURE_DELAY_MS, memory=None, world=None):
+                 capture_delay_ms=CAPTURE_DELAY_MS, memory=None, world=None, connect_inputs=True):
         super().__init__()
         self.overlay = overlay
         self.memory, self.world = memory, world   # db.Store / db.WorldModel, optional
@@ -60,22 +60,46 @@ class Pipeline(QObject):
         self.pending: dict[str, Draft | AgentTask | str] = {}
         self._last_request = 0.0
         self._requests = 0
+        self._submitted_packets = set()
 
         self._deliver.connect(self._on_deliver)
         self.hotkey_pressed.connect(self.trigger)
         self.investigate_hotkey.connect(self.investigate)
-        overlay.ask_requested.connect(self.trigger)
-        overlay.investigate_requested.connect(self.investigate)
-        overlay.text_submitted.connect(self._heard)
-        overlay.input_cancelled.connect(self._reset)
+        if connect_inputs:
+            overlay.ask_requested.connect(self.trigger)
+            overlay.investigate_requested.connect(self.investigate)
+            overlay.text_submitted.connect(self._heard)
+            overlay.input_cancelled.connect(self._reset)
         overlay.approved.connect(self._approved)
         overlay.cancelled.connect(self._cancelled)
-        overlay.pinch_on_proposal.connect(self._pinch_on_proposal)
+        overlay.destination_changed.connect(self._destination_changed)
+        if connect_inputs:
+            overlay.pinch_on_proposal.connect(self._pinch_on_proposal)
         overlay.pause_toggled.connect(self._paused)
 
     @property
     def agent(self):
         return self._pick_agent(self.agent_name)
+
+    def submit_context(self, packet) -> bool:
+        """Continue the normal agent/draft/dispatch flow from a single-use approved packet."""
+        if packet.session_id in self._submitted_packets or not self._can_start() or self.pending:
+            return False
+        try:
+            self.ctx = context.from_packet(packet)
+        except ValueError as e:
+            self._fail(str(e))
+            return False
+        if self._heard(packet.task):
+            self._submitted_packets.add(packet.session_id)
+            return True
+        return False
+
+    def cancel_context(self):
+        """Invalidate the current flow when collection is cancelled or a new task starts."""
+        self.gen += 1
+        self.pending.clear()
+        self._reset()
 
     # --- capture ----------------------------------------------------------
     def _capture_then(self, next_step):
@@ -129,7 +153,7 @@ class Pipeline(QObject):
 
     def _heard(self, command: str):
         if self.overlay.paused or not self._rate_ok():
-            return
+            return False
         self.busy = True
         self._command = command
         if self.world is not None and hasattr(self.brain, "contacts"):
@@ -138,9 +162,13 @@ class Pipeline(QObject):
         self.overlay.set_state("thinking")
         ctx = self.ctx or context.Context(None, None)
         self._run(lambda: self.brain.draft(command, ctx), self._drafted, self._fail, BrainError)
+        return True
 
     def _drafted(self, d: Draft):
         label = getattr(self.brain, "label", "")  # demo brains must say so on every draft
+        explicit_destination = bool(self.ctx and self.ctx.message_platform)
+        if explicit_destination:
+            d = replace(d, platform=self.ctx.message_platform, recipient=self.ctx.message_recipient, subject="")
         if d.platform == "agent":
             self._analyze(request=d.message)        # reuse the screenshot taken when the hotkey fired
             return
@@ -149,21 +177,40 @@ class Pipeline(QObject):
             self.overlay.say(d.message, title=label or "FlowState", seconds=15)
             return
         learned = ""
-        if self.world is not None and not PLATFORM_WORDS.search(self._command):
+        if self.world is not None and not explicit_destination and not PLATFORM_WORDS.search(self._command):
             usual = self.world.preferred_platform(d.recipient)
             if usual and usual != d.platform:   # you didn't name a platform: use the one you usually use
                 d = replace(d, platform=usual)
             learned = " (usual)" if usual else ""
         self._remember_message(d, "drafted")
-        title = f"{d.platform.capitalize()}{learned} to {d.recipient}"
-        if not self._configured(d.platform):
+        self._show_message(d, learned=learned, label=label)
+
+    def _show_message(self, d: Draft, *, pid=None, learned="", label="", error=""):
+        title = (f"{d.platform.capitalize()}{learned} to {d.recipient}" if d.recipient
+                 else f"{d.platform.capitalize()} · configured channel")
+        ready = self._configured(d.platform)
+        if not ready:
             title += " (not configured)"
         if label:
             title = f"{label} · {title}"
         body = f"Subject: {d.subject}\n\n{d.message}" if d.platform == "email" and d.subject else d.message
-        p = Proposal(title=title, body=body, action_label="Send")
+        note = error
+        if d.platform in {"slack", "discord"}:
+            setup = (f"Posts to your configured {d.platform.capitalize()} channel." if ready else
+                     f"{d.platform.capitalize()} webhook is not configured. Choose another channel or add its webhook to .env and restart.")
+            note = f"{error}\n{setup}" if error else setup
+        p = Proposal(title=title, body=body, action_label="Retry" if error else "Send", message_platform=d.platform,
+                     delivery_note=note, can_approve=ready)
+        if pid is not None:
+            p.id = pid
         self.pending[p.id] = d
         self.overlay.propose(p)
+
+    def _destination_changed(self, pid: str, platform: str):
+        item = self.pending.get(pid)
+        if isinstance(item, Draft) and platform in {"slack", "discord"} and not self.busy:
+            item = replace(item, platform=platform, subject="")
+            self._show_message(item, pid=pid, label=getattr(self.brain, "label", ""))
 
     # --- active file -> analysis -> coding agent ---------------------------
     def investigate(self):
@@ -235,15 +282,19 @@ class Pipeline(QObject):
             self._remember_offer("agent", "accepted")
             self._run_agent(item)
         elif isinstance(item, Draft):
+            self.busy = True
             self.overlay.say("Sending...", seconds=None)
+            self.overlay.set_state("thinking")
 
             def sent(msg):
                 self._remember_message(item, "sent")
+                self._reset()
                 self.overlay.say(msg, seconds=4)
 
             def failed(e):
                 self._remember_message(item, "failed")
-                self._fail(e)
+                self._reset()
+                self._show_message(item, error=str(e), label=getattr(self.brain, "label", ""))
 
             self._run(lambda: self._send(item), sent, failed, DispatchError)
 
@@ -298,9 +349,11 @@ class Pipeline(QObject):
                 result = work()
                 self._deliver.emit(gen, lambda: on_ok(result))
             except expected as e:
-                self._deliver.emit(gen, lambda: on_err(e))
+                # Python clears exception variables when the except block exits; Qt delivers later.
+                self._deliver.emit(gen, lambda error=e: on_err(error))
             except Exception as e:  # never let a worker die silently
-                self._deliver.emit(gen, lambda: self._fail(f"Unexpected error: {type(e).__name__}"))
+                message = f"Unexpected error: {type(e).__name__}"
+                self._deliver.emit(gen, lambda message=message: self._fail(message))
 
         self._spawn(task)
 

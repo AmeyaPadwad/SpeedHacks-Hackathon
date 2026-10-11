@@ -26,6 +26,7 @@ class InputCompanion(QObject):
         self._proposal_id = None
         self._state = None
         self._typing = False
+        self.pipeline = None
         self.timer = QTimer(self, interval=250, timeout=self._recording_tick)
         self._last_window = foreground_target()
         self.window_timer = QTimer(self, interval=250, timeout=self._remember_window)
@@ -52,6 +53,36 @@ class InputCompanion(QObject):
         self.overlay.show()
         self.refresh()
 
+    def bind_pipeline(self, pipeline):
+        """Keep one Pette: collection owns inputs, the existing flow owns approved outcomes."""
+        self.pipeline = pipeline
+        self.panel.connected_flow = True
+        self.panel.destination_configured = pipeline._configured
+        self.panel.delivery_controls.show()
+        self.panel._destination_changed()
+        self.panel.handoff_note.show()
+        self.service.packet_ready.connect(self._submit_context)
+        self.service.progress.connect(self._collection_state)
+        self.overlay.investigate_requested.connect(self.show_review)
+
+    def _collection_state(self, state):
+        if state == "idle":
+            self.pipeline.cancel_context()
+
+    def _submit_context(self, packet):
+        self.panel.hide()
+        self._proposal_id = self._action = None
+        self.pipeline.submit_context(packet)
+
+    def _can_collect(self):
+        if self.pipeline is None or self.service.state != "ready":
+            return True
+        if self.pipeline.busy or self.pipeline.pending:
+            self.overlay.reveal()
+            return False
+        self.service.cancel()
+        return True
+
     def _propose(self, title, body, label, action, animation="speaking"):
         proposal = Proposal(title, body, label)
         self._proposal_id, self._action = proposal.id, action
@@ -67,7 +98,7 @@ class InputCompanion(QObject):
         return capture_foreground(self._last_window)
 
     def trigger(self):
-        if self.overlay.paused:
+        if self.overlay.paused or not self._can_collect():
             return
         if self.service.state in {"idle", "opening_microphone", "recording"}:
             if self.service.state == "idle":
@@ -78,7 +109,7 @@ class InputCompanion(QObject):
             self.show_review()
 
     def type_task(self):
-        if self.overlay.paused:
+        if self.overlay.paused or not self._can_collect():
             return
         if self.service.state == "idle":
             self._remember_window()
@@ -183,7 +214,12 @@ class InputCompanion(QObject):
                     body += "\n\nScreenshot unavailable. Open the review card for the capture error."
                 self._propose("Let's review" if count else "Your task", body, "Review context", self.show_review)
         elif state == "ready":
-            self._propose("Context ready", "Your approved task and context are ready.\nOpen the review card to export JSON.", "Export JSON", self.panel._export)
+            if self.pipeline is not None:
+                self.panel.hide()
+                self.overlay.say("Sending your reviewed context to the agent…", title="Working on it", seconds=None)
+                self.overlay.set_state("thinking")
+            else:
+                self._propose("Context ready", "Your approved task and context are ready.\nOpen the review card to export JSON.", "Export JSON", self.panel._export)
 
     def _recording_tick(self):
         if self.service.state != "recording":
@@ -199,6 +235,8 @@ class InputCompanion(QObject):
         self._propose("A little help?", text, "Review / type task", self.show_review)
 
     def close(self):
+        if self.pipeline is not None:
+            self.pipeline.cancel_context()
         self.timer.stop()
         self.window_timer.stop()
         self.overlay._hide_timer.stop()

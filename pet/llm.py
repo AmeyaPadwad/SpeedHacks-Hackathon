@@ -17,6 +17,11 @@ def chat_model() -> str:
     return os.environ.get("GROQ_MODEL") or "qwen/qwen3.8-27b"
 
 
+def vision_model() -> str:
+    """Screenshot-capable drafting when an old input configuration selects text-only GPT-OSS."""
+    return os.environ.get("GROQ_VISION_MODEL") or "qwen/qwen3.8-27b"
+
+
 def text_model() -> str:
     """Text-only work (file analysis). A different model has its own rate-limit bucket on Groq."""
     return os.environ.get("GROQ_TEXT_MODEL") or "openai/gpt-oss-120b"

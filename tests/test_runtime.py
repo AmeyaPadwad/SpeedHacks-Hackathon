@@ -52,11 +52,11 @@ import importlib.abc
 from pathlib import Path
 from PySide6.QtCore import QTimer
 
-# requests belongs to the messaging requirements, not requirements-input.txt.
+# Input capture supplies its own hotkeys/audio; the shared flow must not load desktop CV or PyAudio.
 class InputOnlyDependencies(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
-        if fullname == 'requests':
-            raise ModuleNotFoundError('requests is not installed in this input-only environment')
+        if fullname in ('keyboard', 'speech_recognition', 'pyaudio', 'mediapipe', 'cv2'):
+            raise ModuleNotFoundError(fullname + ' is not installed in this input-only environment')
 sys.meta_path.insert(0, InputOnlyDependencies())
 import main
 real_application = main.QApplication

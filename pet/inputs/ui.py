@@ -5,7 +5,7 @@ import time
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QPixmap, QDesktopServices
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton,
     QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
@@ -19,6 +19,8 @@ class InputPanel(QWidget):
         super().__init__(None, Qt.WindowStaysOnTopHint | Qt.Tool)
         self.service = service
         self.companion_mode = False
+        self.connected_flow = False
+        self.destination_configured = None
         self.setObjectName("inputPanel")
         self.setWindowTitle("Pette · Review your context")
         self.resize(600, min(760, self.screen().availableGeometry().height() - 48))
@@ -34,6 +36,9 @@ class InputPanel(QWidget):
             QPlainTextEdit, QListWidget { background: #FFFDFA; color: #243B32;
                 border: 1px solid #D5DFD5; border-radius: 9px; padding: 8px; font-size: 13px; }
             QPlainTextEdit:focus, QListWidget:focus { border: 1px solid #3E9E78; }
+            QComboBox, QLineEdit { background: #FFFDFA; color: #243B32; border: 1px solid #D5DFD5;
+                border-radius: 8px; padding: 8px; font-size: 13px; }
+            QComboBox QAbstractItemView { background: #FFFDFA; color: #243B32; selection-background-color: #DDF4E7; }
             QListWidget::item { padding: 5px; border-radius: 5px; }
             QListWidget::item:selected { background: #DDF4E7; color: #1C4937; }
             QPushButton { background: #FFFDFA; color: #243B32; border: 1px solid #CBD8CD;
@@ -107,6 +112,26 @@ class InputPanel(QWidget):
         self.task.setFixedHeight(82)
         self.task.setPlaceholderText("Tell Pette what you'd like to build, fix, or explain…")
         layout.addWidget(self.task)
+        self.delivery_controls = QWidget()
+        delivery = QVBoxLayout(self.delivery_controls)
+        delivery.setContentsMargins(0, 0, 0, 0)
+        delivery.addWidget(QLabel("Send the result to", objectName="section"))
+        self.destination = QComboBox()
+        self.destination.addItem("Let the agent decide", "")
+        self.destination.addItem("Slack", "slack")
+        self.destination.addItem("Discord", "discord")
+        delivery.addWidget(self.destination)
+        self.recipient = QLineEdit()
+        self.recipient.setMaxLength(200)
+        self.recipient.setPlaceholderText("Optional person to mention, e.g. Sarah")
+        delivery.addWidget(self.recipient)
+        self.destination_note = QLabel(objectName="subtitle")
+        self.destination_note.setWordWrap(True)
+        delivery.addWidget(self.destination_note)
+        self.destination.currentIndexChanged.connect(self._destination_changed)
+        self.delivery_controls.hide()
+        layout.addWidget(self.delivery_controls)
+        self._destination_changed()
         self.hints = QPlainTextEdit()
         self.hints.setPlaceholderText("Optional file/folder hints, e.g. src/auth.py or tests/")
         self.hints.setFixedHeight(48)
@@ -171,6 +196,10 @@ class InputPanel(QWidget):
         self.warnings.setTextFormat(Qt.PlainText)
         self.warnings.setStyleSheet("color: #99602E; font-size: 12px;")
         layout.addWidget(self.warnings)
+        self.handoff_note = QLabel("Use context sends checked inputs to the agent. Review the result in Pette before sending a message.")
+        self.handoff_note.setWordWrap(True)
+        self.handoff_note.hide()
+        layout.addWidget(self.handoff_note)
         row = QHBoxLayout()
         self.use = QPushButton("Use context", objectName="primary")
         self.export = QPushButton("Export JSON")
@@ -194,6 +223,17 @@ class InputPanel(QWidget):
     def _enable_use(self):
         self.use.setEnabled(self.service.state in {"editing", "reviewing"} and bool(self.task.toPlainText().strip()))
 
+    def _destination_changed(self):
+        platform = self.destination.currentData()
+        self.recipient.setVisible(bool(platform))
+        if not platform:
+            text = "Choose Slack or Discord to turn this task into a message."
+        elif self.destination_configured is not None and not self.destination_configured(platform):
+            text = f"{platform.capitalize()} has no webhook configured. You can switch channels in the message preview."
+        else:
+            text = f"Posts to your configured {platform.capitalize()} webhook channel. Leave the name blank for a channel message."
+        self.destination_note.setText(text)
+
     def refresh(self):
         s = self.service
         labels = {"idle": "Ready. Switch to your IDE and press Ctrl+Shift+Space.",
@@ -204,6 +244,8 @@ class InputPanel(QWidget):
                   "editing": "Review your task, then select relevant files or continue with the screenshot.",
                   "selecting": "Gathering relevant saved project files…", "reviewing": "Review the selected excerpts and screenshot before using context.",
                   "ready": "Context approved. The packet is ready for the Darwin integration; you can export JSON."}
+        if self.connected_flow:
+            labels["ready"] = "Context passed to the agent. Review the result and Send button in Pette's bubble."
         self.status.setText(labels[s.state])
         if s.state == "recording":
             self.status.setStyleSheet("background-color: #fff0f0; color: #a31818; font-size: 16px; font-weight: bold; padding: 12px; border-radius: 6px;")
@@ -222,7 +264,7 @@ class InputPanel(QWidget):
         self.stop.setEnabled(s.state in {"opening_microphone", "recording"})
         self.pick_project.setEnabled(s.state in {"idle", "editing", "reviewing"})
         for widget in (self.task, self.hints, self.select, self.manual, self.clarify, self.cloud,
-                       self.files, self.include_image):
+                       self.files, self.include_image, self.destination, self.recipient):
             widget.setEnabled(editable)
         self.export.setEnabled(s.state == "ready")
         if s.state == "idle":
@@ -339,7 +381,8 @@ class InputPanel(QWidget):
             self.service.select_files(task, hints, cloud_allowed=True)
             return  # Review the results, then click Use context again.
         included = [i for i in range(self.files.count()) if self.files.item(i).checkState() == Qt.Checked]
-        self.service.approve(task, included, include_screenshot=self.include_image.isChecked())
+        self.service.approve(task, included, include_screenshot=self.include_image.isChecked(),
+                             message_platform=self.destination.currentData(), message_recipient=self.recipient.text())
 
     def _export(self):
         packet = self.service.packet
@@ -359,12 +402,21 @@ class InputPanel(QWidget):
         event.ignore()
 
 
-def build_input_gathering(app, project: Path, *, on_packet_ready=None):
+def build_input_gathering(app, project: Path, *, on_packet_ready=None, connect_flow=True):
     from .companion import InputCompanion
 
     service = CollectionService(project, on_packet_ready=on_packet_ready)
     panel = InputPanel(service)
     companion = InputCompanion(service, panel)
+    pipeline = results = None
+    if connect_flow:
+        from pet.pipeline import Pipeline
+        from pet.ui import ResultPanel
+        results = ResultPanel()
+        pipeline = Pipeline(companion.overlay, use_voice=False, connect_inputs=False,
+                            show_result=results.show_result)
+        companion.bind_pipeline(pipeline)
+        app.aboutToQuit.connect(results.close)
     hotkeys = Hotkeys()
     ok = hotkeys.start(service.hotkey_pressed.emit, service.cancel_pressed.emit)
     if not ok:
@@ -373,7 +425,8 @@ def build_input_gathering(app, project: Path, *, on_packet_ready=None):
     app.aboutToQuit.connect(service.close)
     app.aboutToQuit.connect(companion.close)
     return SimpleNamespace(app=app, service=service, panel=panel, companion=companion,
-                           overlay=companion.overlay, hotkeys=hotkeys)
+                           overlay=companion.overlay, hotkeys=hotkeys,
+                           pipeline=pipeline, results=results)
 
 
 def run_input_gathering(app, project: Path, *, on_packet_ready=None):

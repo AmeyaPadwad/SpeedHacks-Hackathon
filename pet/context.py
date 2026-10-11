@@ -7,6 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QGuiApplication, QPixmap
 
+from .inputs.packet import ContextPacket, FileExcerpt
+
 ACTIVE_FILE = Path(os.environ.get("FLOWSTATE_ACTIVE_FILE") or Path.home() / ".flowstate_current.json")
 MAX_EDGE = 1280
 JPEG_QUALITY = 75
@@ -44,6 +46,44 @@ class ActiveFile:
 class Context:
     screenshot_jpeg: bytes | None
     active_file: ActiveFile | None
+    reviewed_files: tuple[FileExcerpt, ...] = ()
+    project_root: str = ""
+    window_description: str = ""
+    message_platform: str = ""
+    message_recipient: str = ""
+
+
+def reviewed_file_text(ctx: Context, limit: int = 12_000) -> str:
+    """Budget excerpts across all approved files, retaining their original path/line headers."""
+    if not ctx.reviewed_files:
+        return ""
+    budget = max(1, (limit - 2 * len(ctx.reviewed_files)) // len(ctx.reviewed_files))
+    blocks = []
+    for excerpt in ctx.reviewed_files:
+        text = excerpt.context_text()
+        if len(text) > budget:
+            suffix = "\n[Excerpt truncated for agent prompt]"
+            text = text[:max(0, budget - len(suffix))] + suffix
+        blocks.append(text)
+    return "\n\n".join(blocks)[:limit]
+
+
+def from_packet(packet: ContextPacket) -> Context:
+    """Use only reviewed inputs; never recapture the screen or read another editor/file."""
+    image = None
+    if packet.screenshot_png is not None:
+        pm = QPixmap()
+        if not pm.loadFromData(packet.screenshot_png, "PNG"):
+            raise ValueError("Could not decode the approved screenshot. Recapture it or uncheck it and retry.")
+        image = encode_jpeg(pm)
+    af = None
+    if packet.files:
+        first = packet.files[0]
+        af = ActiveFile(first.path, Path(first.path).suffix.lstrip("."), first.content,
+                        workspace=packet.project_root)
+    return Context(image, af, packet.files, packet.project_root,
+                   f"{packet.window.app[:200]} · {packet.window.title[:500]}",
+                   packet.message_platform, packet.message_recipient)
 
 
 def grab_screen() -> bytes | None:

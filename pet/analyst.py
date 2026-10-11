@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from . import llm
 from .brain import TIMEOUT_S, BrainError
-from .context import Context
+from .context import Context, reviewed_file_text
 
 MAX_TEXT = 600
 EXCERPT_RADIUS = 25   # lines of code around the first error
@@ -134,6 +134,8 @@ class Analyst:
             out.append("Diagnostics:\n" + "\n".join(f"- {d}" for d in af.diagnostics))
         if af and af.selection:
             out.append(f"Selected text:\n{af.selection[:2000]}")
-        if ex := code_excerpt(ctx):
+        if ctx.reviewed_files:
+            out.append("Reviewed project-file excerpts:\n" + reviewed_file_text(ctx))
+        elif ex := code_excerpt(ctx):
             out.append(f"Code excerpt:\n{ex}")
         return "\n\n".join(out)

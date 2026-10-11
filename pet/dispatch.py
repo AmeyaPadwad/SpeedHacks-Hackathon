@@ -50,7 +50,7 @@ def send_slack(d: Draft, contact: dict):
     if not url:
         raise DispatchError("SLACK_WEBHOOK_URL is not set.")
     who = f"<@{contact['slack']}>" if contact.get("slack") else d.recipient
-    _post(url, {"text": f"{who} {d.message}"})
+    _post(url, {"text": f"{who} {d.message}" if who else d.message})
 
 
 def send_discord(d: Draft, contact: dict):
@@ -60,7 +60,8 @@ def send_discord(d: Draft, contact: dict):
     uid = contact.get("discord")
     who = f"<@{uid}>" if uid else d.recipient
     # Only ping the resolved recipient; never @everyone/@here or roles from model text.
-    _post(url, {"content": f"{who} {d.message}", "allowed_mentions": {"users": [str(uid)] if uid else []}})
+    _post(url, {"content": f"{who} {d.message}" if who else d.message,
+                "allowed_mentions": {"users": [str(uid)] if uid else []}})
 
 
 def send_email(d: Draft, contact: dict):
@@ -94,5 +95,7 @@ def dispatch(d: Draft, contacts: dict[str, dict] | None = None) -> str:
     if sender is None:
         raise DispatchError(f"Nothing to send for platform {d.platform!r}.")
     contacts = load_contacts() if contacts is None else contacts
-    sender(d, contacts.get(d.recipient.strip().lower(), {}))
+    sender(d, contacts.get(d.recipient.strip().lower(), {}) if d.recipient else {})
+    if not d.recipient:
+        return f"Sent to your configured {d.platform.capitalize()} channel."
     return f"Sent to {d.recipient} on {d.platform.capitalize()}."

@@ -3,10 +3,10 @@ import math
 import uuid
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QRect, Qt, QTimer, Signal, QSignalBlocker
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
     QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
@@ -25,6 +25,9 @@ class Proposal:
     body: str
     action_label: str = "Send"
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    message_platform: str = ""
+    delivery_note: str = ""
+    can_approve: bool = True
 
 
 class PetWidget(QWidget):
@@ -107,6 +110,7 @@ class Bubble(QFrame):
     cancelled = Signal(str)
     submitted = Signal(str)
     input_cancelled = Signal()
+    destination_changed = Signal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -125,12 +129,27 @@ class Bubble(QFrame):
             QPushButton:disabled {{ background: #D8D2C4; color: #8A8A8A; border-color: #8A8A8A; }}
             QLineEdit {{ font-family: 'Segoe UI'; font-size: 11pt; padding: 5px 8px; border-radius: 8px;
                         border: 1px solid {INK}; background: white; color: {INK}; }}
+            QComboBox {{ background: white; color: {INK}; padding: 5px; border: 1px solid {INK}; border-radius: 6px; }}
+            QComboBox QAbstractItemView {{ background: white; color: {INK}; selection-background-color: {MINT}; }}
         """)
         self.title = QLabel(objectName="title")
         self.body = QLabel(objectName="body", wordWrap=True, textInteractionFlags=Qt.TextSelectableByMouse)
         self.input = QLineEdit()
         self.input.returnPressed.connect(self._submit)
         self.input.hide()
+        self.delivery = QWidget()
+        delivery_row = QHBoxLayout(self.delivery)
+        delivery_row.setContentsMargins(0, 0, 0, 0)
+        delivery_row.addWidget(QLabel("Send via"))
+        self.destination = QComboBox()
+        self.destination.addItem("Slack", "slack")
+        self.destination.addItem("Discord", "discord")
+        delivery_row.addWidget(self.destination, 1)
+        self.destination.currentIndexChanged.connect(self._destination_changed)
+        self.delivery_status = QLabel(wordWrap=True)
+        self.delivery_status.setTextFormat(Qt.PlainText)
+        self.delivery.hide()
+        self.delivery_status.hide()
         self.primary = QPushButton(objectName="primary")
         self.cancel = QPushButton("Cancel")
         row = QHBoxLayout()
@@ -143,7 +162,7 @@ class Bubble(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 10, 14, 12)
         lay.setSpacing(6)
-        for w in (self.title, self.body, self.input, self.buttons):
+        for w in (self.title, self.body, self.input, self.delivery, self.delivery_status, self.buttons):
             lay.addWidget(w)
         self.proposal: Proposal | None = None
         self.asking = False
@@ -157,6 +176,8 @@ class Bubble(QFrame):
         self.title.setVisible(bool(title))
         self.body.setText(text)
         self.input.hide()
+        self.delivery.hide()
+        self.delivery_status.hide()
         self.buttons.hide()
         self.show()
 
@@ -168,6 +189,8 @@ class Bubble(QFrame):
         self.input.clear()
         self.input.setPlaceholderText("e.g. Slack Sarah asking her to review this file")
         self.input.show()
+        self.delivery.hide()
+        self.delivery_status.hide()
         self.primary.setText("Go")
         self.primary.setEnabled(True)
         self.cancel.setEnabled(True)
@@ -183,16 +206,28 @@ class Bubble(QFrame):
         self.title.show()
         self.body.setText(p.body)
         self.primary.setText(p.action_label)
-        self.primary.setEnabled(True)
+        self.primary.setEnabled(p.can_approve)
         self.cancel.setEnabled(True)
+        self.delivery.setVisible(p.message_platform in {"slack", "discord"})
+        if p.message_platform in {"slack", "discord"}:
+            with QSignalBlocker(self.destination):
+                self.destination.setCurrentIndex(self.destination.findData(p.message_platform))
+        self.delivery_status.setText(p.delivery_note)
+        self.delivery_status.setVisible(bool(p.delivery_note))
         self.buttons.show()
         self.show()
+
+    def _destination_changed(self):
+        if self.proposal is not None and self.proposal.message_platform in {"slack", "discord"}:
+            self.destination_changed.emit(self.proposal.id, self.destination.currentData())
 
     def _consume(self) -> str | None:
         """Single-use approval bound to the displayed proposal id."""
         p, self.proposal = self.proposal, None
         self.primary.setEnabled(False)
         self.cancel.setEnabled(False)
+        self.delivery.hide()
+        self.delivery_status.hide()
         return p.id if p else None
 
     def _submit(self):
@@ -273,6 +308,7 @@ class Overlay(QWidget):
     input_cancelled = Signal()
     investigate_requested = Signal()
     pinch_on_proposal = Signal(str)   # proposal id; pipeline decides (re-dictate drafts, ignore the rest)
+    destination_changed = Signal(str, str)
 
     def __init__(self, sheet: SpriteSheet | None = None, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -294,6 +330,7 @@ class Overlay(QWidget):
         self.bubble.cancelled.connect(self._decided(self.cancelled))
         self.bubble.submitted.connect(self.text_submitted)
         self.bubble.input_cancelled.connect(self._on_input_cancelled)
+        self.bubble.destination_changed.connect(self.destination_changed)
         self.pet.clicked.connect(self._on_pet_click)
         self._hide_timer = QTimer(self, singleShot=True, timeout=self.dismiss)
         self._pause_action = None

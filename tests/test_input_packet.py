@@ -43,10 +43,23 @@ def test_selection_status_roundtrips_and_older_exports_remain_readable():
     assert loaded.file_selection_provider == ""
 
 
+def test_message_destination_roundtrips_and_old_packets_keep_automatic_routing():
+    packet = ContextPacket("Summarize the code", message_platform="discord", message_recipient="Sarah")
+    assert ContextPacket.from_json(packet.to_json()) == packet
+    older = packet.to_dict()
+    older.pop("message_platform")
+    older.pop("message_recipient")
+    loaded = ContextPacket.from_json(json.dumps(older))
+    assert loaded.message_platform == "" and loaded.message_recipient == ""
+
+
 @pytest.mark.parametrize("kwargs", [{"task": " "}, {"task": "fix", "schema_version": 2},
     {"task": "fix", "screenshot_png": b"not png"},
     {"task": "fix", "screenshot_png": b"\x89PNG\r\n\x1a\n" + b"x" * MAX_IMAGE_BYTES},
-    {"task": "fix", "files": (FileExcerpt("a", 1, 1, "a"),) * 9}])
+    {"task": "fix", "files": (FileExcerpt("a", 1, 1, "a"),) * 9},
+    {"task": "fix", "message_platform": "sms"},
+    {"task": "fix", "message_platform": []},
+    {"task": "fix", "message_recipient": 5}])
 def test_invalid_packet_is_rejected(kwargs):
     with pytest.raises(ValueError):
         ContextPacket(**kwargs)

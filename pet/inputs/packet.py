@@ -49,6 +49,8 @@ class ContextPacket:
     file_selection_status: str = "unknown"
     file_selection_model: str = ""
     file_selection_provider: str = ""
+    message_platform: str = ""
+    message_recipient: str = ""
 
     def __post_init__(self):
         if self.schema_version != 1 or not isinstance(self.task, str) or not self.task.strip():
@@ -69,6 +71,9 @@ class ContextPacket:
                 or not isinstance(self.file_selection_provider, str)
                 or self.file_selection_provider not in {"", "groq", "openai"}):
             raise ValueError("Invalid file selection status.")
+        if (not isinstance(self.message_platform, str) or self.message_platform not in {"", "slack", "discord"}
+                or not isinstance(self.message_recipient, str) or len(self.message_recipient) > 200):
+            raise ValueError("Invalid message destination.")
         if self.screenshot_png is not None:
             if not isinstance(self.screenshot_png, bytes) or not self.screenshot_png.startswith(b"\x89PNG\r\n\x1a\n"):
                 raise ValueError("Screenshot must contain PNG bytes.")

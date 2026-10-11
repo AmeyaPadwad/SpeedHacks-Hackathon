@@ -89,7 +89,8 @@ def test_dispatch_error_shown(make):
     o, p, sent = make(send_exc=DispatchError("Webhook returned HTTP 403"))
     p.trigger()
     o.bubble.primary.click()
-    assert "403" in o.bubble.body.text()
+    assert "403" in o.bubble.delivery_status.text()
+    assert o.bubble.proposal and p.pending and not p.busy
 
 
 def test_pause_drops_late_results(make):
