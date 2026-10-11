@@ -2,7 +2,7 @@
 
     py tools/run_checks.py                 # all checks except ones with outside side effects
     py tools/run_checks.py --webhooks      # also post a labelled test message to Slack/Discord
-    py tools/run_checks.py --no-camera --no-agent
+    py tools/run_checks.py --no-camera
 
 Live checks report numbers only: no camera frames, screen images or file contents are saved.
 """
@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -184,76 +185,61 @@ def openai_check():
         record(name, "FAIL", llm.describe_error(e) + " (app falls back to labelled local analysis)")
 
 
-@check("Claude Code agent (live, read-only)")
-def agent_check():
-    from pet.agents import AgentTask, ClaudeCodeAgent
-    from pet.analyst import local_analysis
-    from pet.context import ActiveFile, Context, Diagnostic
-    agent = ClaudeCodeAgent()
-    if not agent.available():
-        record("Claude Code agent (live, read-only)", "SKIP", "claude CLI not on PATH")
-        return
-    ws = ROOT / "fixtures" / "buggy_app"
-    before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in ws.glob("*.py")}
-    af = ActiveFile(str(ws / "dashboard.py"), "python", (ws / "dashboard.py").read_text(), workspace=str(ws),
-                    diagnostics=(Diagnostic(12, "error", "TypeError: 'NoneType' object is not subscriptable", "pytest"),))
-    ctx = Context(None, af)
-    t = time.time()
-    res = agent.run(AgentTask.from_context(local_analysis(ctx, "check"), ctx))
-    after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in ws.glob("*.py")}
-    found = "none" in res.text.lower() and ("diff" in res.text.lower() or "@@" in res.text)
-    unchanged = before == after
-    record("Claude Code agent (live, read-only)", "PASS" if found and unchanged else "FAIL",
-           f"answered in {time.time() - t:.0f}s, {len(res.text)} chars, root cause + diff: {'yes' if found else 'no'}, "
-           f"fixture files unchanged: {'yes' if unchanged else 'NO'}")
-
-
-@check("ElevenLabs voice agent")
+@check("ElevenLabs transcription")
 def eleven_check():
-    """Text-only conversation: does the agent answer, and does it call propose_message for a draft?"""
-    from websockets.sync.client import connect
+    """Speak a known sentence with Windows' built-in TTS, stream it as the 'mic', and compare the transcript."""
+    import wave
 
     from pet import eleven
-    name = "ElevenLabs voice agent"
+    name = "ElevenLabs transcription"
     settings = eleven.Settings.from_env()
     if settings is None:
-        record(name, "SKIP", "ELEVENLABS_AGENT_ID not set (or FLOWSTATE_VOICE=whisper)")
+        record(name, "SKIP", "ELEVENLABS_AGENT_ID / ELEVENLABS_API_KEY not set (or FLOWSTATE_VOICE=whisper)")
         return
-    tool, greeted = None, False
-    with connect(settings.url(), open_timeout=10) as ws:
-        ws.send(json.dumps({"type": "conversation_initiation_client_data",
-                            "conversation_config_override": {"conversation": {"text_only": True}}}))
-        deadline = time.time() + 25
-        while time.time() < deadline and tool is None:
-            try:
-                msg = json.loads(ws.recv(timeout=2))
-            except TimeoutError:
-                continue
-            kind = msg.get("type")
-            if kind == "ping":
-                ws.send(json.dumps({"type": "pong", "event_id": msg["ping_event"]["event_id"]}))
-            elif kind == "agent_response" and not greeted:
-                greeted = True
-                ws.send(json.dumps({"type": "user_message", "text": "Slack Sarah saying the build is green."}))
-            elif kind == "client_tool_call":
-                call = msg["client_tool_call"]
-                tool = call.get("tool_name")
-                ws.send(json.dumps({"type": "client_tool_result", "tool_call_id": call.get("tool_call_id"),
-                                    "result": "Check only; nothing shown.", "is_error": False}))
-    if tool == eleven.MESSAGE_TOOL:
-        record(name, "PASS", f"agent answered and called {tool} for a Slack draft (text-only check, nothing sent)")
-    elif greeted:
-        record(name, "FAIL", "agent answers but never called propose_message: add the client tools from "
-                             "tools/elevenlabs_agent_tools.json in the ElevenLabs dashboard")
+    said = "Send a Slack message to Sarah saying the dashboard bug is fixed."
+    wav_path = Path(tempfile.mkdtemp()) / "said.wav"
+    ps = ("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+          "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo 16000, "
+          "([System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen), ([System.Speech.AudioFormat.AudioChannel]::Mono); "
+          f"$s.SetOutputToWaveFile('{wav_path}', $f); $s.Speak('{said}'); $s.Dispose()")
+    import shutil
+    shell = shutil.which("powershell") or str(
+        Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe")
+    subprocess.run([shell, "-NoProfile", "-Command", ps], check=True, capture_output=True, timeout=60)
+    speech = wave.open(str(wav_path)).readframes(10 ** 9)
+    t = time.time()
+    if settings.mode == "scribe":
+        import io
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000), w.writeframes(speech)
+        text = eleven.scribe(buf.getvalue(), settings.api_key)
     else:
-        record(name, "FAIL", "agent didn't respond within 25s")
+        class WavMic:
+            def __init__(self):
+                self.buf = b"\0\0" * 16000 + speech + b"\0\0" * 16000 * 20
 
+            def open(self):
+                pass
 
-@check("Hermes agent")
-def hermes_check():
-    from pet.agents import HermesAgent
-    record("Hermes agent", "INFO" if HermesAgent().available() else "SKIP",
-           "installed (adapter unit-tested; live run not part of checks)" if HermesAgent().available() else "not installed")
+            def read(self, frames):
+                time.sleep(frames / 16000)
+                chunk, self.buf = self.buf[:frames * 2], self.buf[frames * 2:]
+                return chunk or b"\0\0" * frames
+
+            def close(self):
+                pass
+        text = eleven.LiveTranscriber(settings, audio=WavMic()).run()
+    words = lambda s: set(re.findall(r"[a-z]+", s.lower()))
+    recall = len(words(said) & words(text)) / len(words(said))
+    detail = f"{settings.mode} mode, {time.time() - t:.1f}s: “{text}” ({recall:.0%} of words)"
+    if recall >= 0.8:
+        record(name, "PASS", detail)
+    elif settings.mode == "live":
+        record(name, "FAIL", detail + ". The agent's spoken greeting swallows the start of the command: clear "
+                                      "'First message' in the ElevenLabs agent, or set ELEVENLABS_API_KEY for Scribe")
+    else:
+        record(name, "FAIL", detail)
 
 
 @check("Slack / Discord webhooks")
@@ -273,17 +259,16 @@ def webhook_check(enabled):
 @check("UI states (screenshots)")
 def ui_check(app):
     from PySide6.QtCore import QTimer
-    from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+    from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 
     from db import Store, WorldModel
-    from pet.agents import AgentResult
-    from pet.analyst import LocalAnalyst
     from pet.brain import OfflineBrain
-    from pet.context import ActiveFile, Context, Diagnostic
+    from pet.context import ActiveFile, Context
     from pet.pipeline import Pipeline
     from pet.ui import Overlay
     from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
     from pet.watcher import Watcher
+    from pet.worldview import WorldWindow
     import pet.pipeline as pp
     pp.MIN_INTERVAL_S = 0
 
@@ -294,42 +279,48 @@ def ui_check(app):
     for _ in range(3):
         store.log_message("sarah", "slack", "sent")
     store.log_event("away_ended", 18.0)
-    af = ActiveFile("C:/repo/dashboard.py", "python", "", diagnostics=(Diagnostic(12, "error", "TypeError: 'NoneType'", "pytest"),))
-
-    class FakeAgent:
-        name, label = "claude", "Claude Code"
-
-        def run(self, task):
-            return AgentResult("claude", "diff")
+    af = ActiveFile("C:/repo/dashboard.py", "python", "x = 1\n")
+    diff = "--- a/dashboard.py\n+++ b/dashboard.py\n+    if user is None:\n+        return 'Unknown user'"
 
     o = Overlay(tray=False)
-    p = Pipeline(o, OfflineBrain(), analyst=LocalAnalyst(), use_voice=False, spawn=lambda f: f(), capture_delay_ms=0,
-                 capture=lambda: Context(None, af), read_file=lambda: af,
+    p = Pipeline(o, OfflineBrain(), use_voice=False, spawn=lambda f: f(), capture=lambda: Context(af, diff),
                  send=lambda d: f"Sent to {d.recipient} on {d.platform.title()}.", configured=lambda _: True,
-                 pick_agent=lambda n=None: FakeAgent(), memory=store, world=world)
-    w = Watcher(o, lambda: p.busy, read_file=lambda: None, memory=store, world=world)
+                 memory=store, world=world, send_delay_s=4)
+    w = Watcher(o, memory=store, world=world)
+    win = WorldWindow(o, world, p, w)
     o.place_default()
     o.show()
     shots = []
+    # synthetic camera frame (no real camera in checks): a face blob and an open hand
+    img = QImage(168, 168, QImage.Format_RGB888)
+    img.fill(QColor("#c7b8a6"))
+    pt = QPainter(img)
+    pt.setBrush(QColor("#8d6e63"))
+    pt.drawEllipse(54, 30, 60, 70)
+    pt.end()
+    hand = [(0.70, 0.95), (0.62, 0.85), (0.57, 0.76), (0.53, 0.68), (0.50, 0.62), (0.66, 0.66), (0.66, 0.54),
+            (0.66, 0.46), (0.66, 0.40), (0.73, 0.65), (0.74, 0.52), (0.75, 0.44), (0.75, 0.37), (0.80, 0.67),
+            (0.82, 0.56), (0.83, 0.48), (0.84, 0.42), (0.86, 0.71), (0.89, 0.63), (0.91, 0.57), (0.92, 0.52)]
 
-    def typed(text):
-        o.bubble.input.setText(text)
-        o.bubble.primary.click()
+    def camera(gesture):
+        o.set_camera_indicator(True)
+        o.orb.set_frame({"image": img, "hand": hand, "gesture": gesture})
+
+    def tick_all():
+        while p._countdown.isActive():
+            p._tick()
 
     steps = [
-        ("idle", lambda: None),
-        ("camera on, away", lambda: (o.set_camera_indicator(True), w.on_vision_event(FACE_AWAY))),
+        ("idle, camera off", lambda: None),
+        ("camera: you + hand", lambda: camera("open hand")),
+        ("away", lambda: w.on_vision_event(FACE_AWAY)),
         ("eyes closed", lambda: (w.on_vision_event(FACE_BACK), w.on_vision_event(EYES_CLOSED))),
-        ("pinch = push-to-talk", lambda: (w.on_vision_event(EYES_OPEN), w.on_vision_event(PINCH),
-                                          o.bubble.input.setText("message Sarah saying the fix is in"))),
-        ("learned platform draft", lambda: o.bubble.primary.click()),
-        ("back from away: nudge", lambda: (w.on_vision_event(FACE_AWAY), w.on_vision_event(FACE_BACK))),
-        ("sent", lambda: o.bubble.primary.click()),
-        # offers never interrupt a visible bubble, so clear the "Sent" confirmation first
-        ("proactive offer", lambda: (o.dismiss(), p.offer_investigation("dashboard.py line 12: TypeError: 'NoneType'"))),
-        ("CV analysis -> agent", lambda: o.bubble.primary.click()),
-        ("what Pette learned", lambda: (o.bubble.cancel.click(), o.say(world.summary(), title="Pette's memory",
-                                                                       seconds=None))),
+        ("pinch = talk", lambda: (w.on_vision_event(EYES_OPEN), camera("pinch"), w.on_vision_event(PINCH),
+                                  o.bubble.input.setText("message Sarah what I changed"))),
+        ("draft + countdown", lambda: (camera("open hand"), o.bubble.primary.click())),
+        ("sent", tick_all),
+        ("cancelled", lambda: (o.dismiss(), p.trigger(), o.bubble.input.setText("Slack Sarah the fix"),
+                               o.bubble.primary.click(), o.bubble.cancel.click())),
         ("paused", lambda: o.set_paused(True)),
     ]
     done = {"v": False}
@@ -340,25 +331,33 @@ def ui_check(app):
             return
         name, action = steps[i]
         action()
-        QTimer.singleShot(600, lambda: (app.processEvents(), shots.append((name, o.grab())), run(i + 1)))
+        QTimer.singleShot(700, lambda: (app.processEvents(), shots.append((name, o.grab())), run(i + 1)))
 
     QTimer.singleShot(300, run)
-    deadline = time.time() + 30
+    deadline = time.time() + 40
     while not done["v"] and time.time() < deadline:
         app.processEvents()
         time.sleep(0.02)
+    o.set_paused(False)
+    win.show_near()
+    t_end = time.time() + 3
+    while time.time() < t_end:
+        app.processEvents()
+        time.sleep(0.02)
+    shots.append(("world model window", win.grab()))
     o.hide()
+    win.hide()
     store.close()
 
     for i, (name, pm) in enumerate(shots, 1):
         pm.save(str(SHOTS / f"{i:02d}_{name.split(' ')[0].replace(',', '')}.png"))
     pad, cap = 14, 26
-    cols = 6
+    cols = 5
     rows = [shots[i:i + cols] for i in range(0, len(shots), cols)]
     cw = max(pm.width() for _, pm in shots) + pad
     rh = max(pm.height() for _, pm in shots) + cap + pad
     sheet = QPixmap(cw * cols + pad, rh * len(rows) + pad)
-    sheet.fill(QColor("#3A4A5C"))
+    sheet.fill(QColor("#27272a"))
     painter = QPainter(sheet)
     painter.setPen(QColor("white"))
     painter.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
@@ -369,8 +368,9 @@ def ui_check(app):
             painter.drawPixmap(x, y + rh - pad - pm.height(), pm)
     painter.end()
     sheet.save(str(OUT / "ui_states.png"))
-    record("UI states (screenshots)", "PASS" if len(shots) == len(steps) else "FAIL",
-           f"{len(shots)}/{len(steps)} states rendered on the real display -> test_results/ui_states.png")
+    expected = len(steps) + 1
+    record("UI states (screenshots)", "PASS" if len(shots) == expected else "FAIL",
+           f"{len(shots)}/{expected} states rendered on the real display -> test_results/ui_states.png")
 
 
 # --- report ------------------------------------------------------------------
@@ -407,7 +407,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--webhooks", action="store_true", help="post a labelled test message to configured webhooks")
     ap.add_argument("--no-camera", action="store_true")
-    ap.add_argument("--no-agent", action="store_true")
+    ap.add_argument("--no-agent", action="store_true", help=argparse.SUPPRESS)   # old flag, no agents any more
     args = ap.parse_args()
     OUT.mkdir(exist_ok=True)
     started = time.time()
@@ -426,12 +426,7 @@ def main() -> int:
     bridge_check()
     db_check()
     openai_check()
-    if args.no_agent:
-        record("Claude Code agent (live, read-only)", "SKIP", "--no-agent")
-    else:
-        agent_check()
     eleven_check()
-    hermes_check()
     webhook_check(args.webhooks)
     ui_check(app)
     write_report(started)

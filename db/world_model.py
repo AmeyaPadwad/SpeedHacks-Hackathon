@@ -11,6 +11,7 @@ from .store import Store
 DEFAULT_BLINK_ON = 0.6
 MIN_BASELINE_SAMPLES = 300
 DEFAULT_COOLDOWN_S = 600
+DEFAULT_SEND_DELAY_S = 4.0
 
 
 class WorldModel:
@@ -54,6 +55,24 @@ class WorldModel:
         p95 = sum(p * s for p, s in rows) / total
         return round(min(0.85, max(0.5, p95 + 0.15)), 2)
 
+    def outcome_counts(self) -> dict[str, int]:
+        rows = self.store.query("SELECT outcome, COUNT(*) FROM messages GROUP BY outcome")
+        return {k: 0 for k in ("drafted", "sent", "cancelled", "failed")} | dict(rows)
+
+    def send_delay_s(self) -> float:
+        """Seconds Pette waits (with Cancel showing) before dispatching. You cancel a lot -> more time to catch it;
+        you almost never cancel -> snappier. Needs 5 decided messages before it moves off the default."""
+        c = self.outcome_counts()
+        decided = c["sent"] + c["cancelled"]
+        if decided < 5:
+            return DEFAULT_SEND_DELAY_S
+        cancel_rate = c["cancelled"] / decided
+        if cancel_rate >= 0.3:
+            return 6.0
+        if cancel_rate <= 0.05:
+            return 2.5
+        return DEFAULT_SEND_DELAY_S
+
     # --- interruption -----------------------------------------------------
     def offer_cooldown_s(self, base: float = DEFAULT_COOLDOWN_S) -> float:
         """Back off proactive offers you keep declining; offer sooner if you usually accept."""
@@ -93,10 +112,43 @@ class WorldModel:
             lines.append(f"You send {rate:.0%} of drafts")
         thr = self.blink_threshold()
         lines.append(f"Eyes-closed threshold: {thr}" + (" (calibrated)" if thr != DEFAULT_BLINK_ON else " (default)"))
-        cd = self.offer_cooldown_s()
-        lines.append(f"Proactive offer cooldown: {cd / 60:.0f} min")
+        lines.append(f"Send countdown: {self.send_delay_s():g}s")
         p = self.presence_today()
         lines.append(f"Last 24h: away {p['away_episodes']}x"
                      + (f" (median {p['median_away_s']}s)" if p["median_away_s"] else "")
                      + f", eyes closed {p['eyes_closed']}x, pinches {p['pinches']}")
         return "\n".join(lines)
+
+    # --- UI ---------------------------------------------------------------
+    def snapshot(self) -> dict:
+        """Everything the world-model window shows: learned facts plus the behaviour each one drives."""
+        counts = self.outcome_counts()
+        contacts = []
+        for name, platform in self.known_contacts(8):
+            by = dict(self.store.query("SELECT outcome, COUNT(*) FROM messages WHERE recipient = ? GROUP BY outcome",
+                                       (name,)))
+            contacts.append({"name": name.title(), "platform": platform, "sent": by.get("sent", 0),
+                             "drafted": by.get("drafted", 0), "cancelled": by.get("cancelled", 0)})
+        samples = self.store.query("SELECT COALESCE(SUM(samples), 0) FROM "
+                                   "(SELECT samples FROM blink_baseline ORDER BY ts DESC LIMIT 20)")[0][0]
+        thr = self.blink_threshold()
+        delay = self.send_delay_s()
+        decided = counts["sent"] + counts["cancelled"]
+        rules = [{"when": f"You say “message {c['name']}” without a platform",
+                  "then": f"Pette uses {c['platform'].title()}",
+                  "why": f"{c['sent']} sent, {c['drafted']} drafted to {c['name']} there"}
+                 for c in contacts if c["platform"]][:4]
+        rules.append({"when": "A draft is ready", "then": f"Pette waits {delay:g}s before sending (Cancel shows)",
+                      "why": (f"you cancelled {counts['cancelled']} of {decided} messages" if decided >= 5
+                              else "default until 5 messages are decided")})
+        rules.append({"when": "Your eyes look closed on camera", "then": f"blink score above {thr}",
+                      "why": f"calibrated from {samples} open-eye samples" if thr != DEFAULT_BLINK_ON
+                             else "default until the camera has seen enough open-eye frames"})
+        recent = [{"ts": ts, "recipient": r.title(), "platform": p, "outcome": o} for ts, r, p, o in self.store.query(
+            "SELECT ts, recipient, platform, outcome FROM messages ORDER BY ts DESC LIMIT 8")]
+        events = [{"ts": ts, "kind": k} for ts, k in self.store.query(
+            "SELECT ts, kind FROM events ORDER BY ts DESC LIMIT 8")]
+        return {"contacts": contacts, "outcomes": counts, "send_rate": self.send_rate(), "send_delay_s": delay,
+                "blink_threshold": thr, "blink_calibrated": thr != DEFAULT_BLINK_ON, "baseline_samples": samples,
+                "presence": self.presence_today(), "rules": rules, "recent": recent, "events": events,
+                "updated": self._clock()}

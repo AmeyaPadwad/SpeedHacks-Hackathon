@@ -7,65 +7,57 @@ from pathlib import Path
 import pytest
 
 from db import Store, WorldModel
-from pet.agents import AgentResult
-from pet.analyst import LocalAnalyst
 from pet.brain import OfflineBrain
-from pet.context import ActiveFile, Context, Diagnostic
+from pet.context import ActiveFile, Context
 from pet.focus import DEFAULT_APPS, FocusGate
 from pet.pipeline import Pipeline
 from pet.ui import Overlay
 from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
 from pet.watcher import Watcher
+from pet.worldview import WorldWindow
 
 ROOT = Path(__file__).resolve().parent.parent
 AF = ActiveFile(str(ROOT / "fixtures/buggy_app/dashboard.py"), "python", "x\n" * 20,
-                workspace=str(ROOT / "fixtures/buggy_app"),
-                diagnostics=(Diagnostic(12, "error", "TypeError: 'NoneType' object is not subscriptable", "pytest"),))
-
-
-class Agent:
-    name, label = "claude", "Claude Code"
-
-    def __init__(self):
-        self.tasks = []
-
-    def run(self, task):
-        self.tasks.append(task)
-        return AgentResult("claude", "--- a/dashboard.py\n+++ b/dashboard.py\n+    if user is None: ...")
+                workspace=str(ROOT / "fixtures/buggy_app"))
+DIFF = "--- a/dashboard.py\n+++ b/dashboard.py\n+    if user is None:\n+        return 'unknown user'"
 
 
 def test_full_session(qapp, monkeypatch, tmp_path):
     monkeypatch.setattr("pet.pipeline.MIN_INTERVAL_S", 0)
-    monkeypatch.setattr("pet.watcher.InterventionPolicy.DIAG_PERSIST_S", 0)
     store = Store(tmp_path / "cache.sqlite3")
     world = WorldModel(store)
     overlay = Overlay(tray=False)
-    agent, sent, shown = Agent(), [], []
-    pipeline = Pipeline(overlay, OfflineBrain(), analyst=LocalAnalyst(), capture=lambda: Context(b"jpg", AF), read_file=lambda: AF,
+    sent = []
+    pipeline = Pipeline(overlay, OfflineBrain(), capture=lambda: Context(AF, DIFF),
                         send=lambda d: sent.append(d) or f"Sent to {d.recipient}.", configured=lambda _: True,
-                        pick_agent=lambda name=None: agent, show_result=lambda t, x: shown.append(x),
-                        use_voice=False, spawn=lambda f: f(), capture_delay_ms=0, memory=store, world=world)
-    watcher = Watcher(overlay, lambda: pipeline.busy, read_file=lambda: AF, memory=store, world=world)
-    watcher.offer.connect(pipeline.offer_investigation)
+                        use_voice=False, spawn=lambda f: f(), memory=store, world=world, send_delay_s=2)
+    watcher = Watcher(overlay, memory=store, world=world)
+    win = WorldWindow(overlay, world, pipeline, watcher, web=False)
     fg = {"exe": "Code.exe"}
     gate = FocusGate(overlay, info=lambda: (fg["exe"], "Win", 99), apps=set(DEFAULT_APPS))
     gate.enabled = True
     overlay.show()
+    win.show_near()
 
     def say_command(text):
         overlay.bubble.input.setText(text)
         overlay.bubble.primary.click()
 
-    # 1. In VS Code: pinch to talk, send a Slack message to Sarah.
+    def countdown():
+        while pipeline._countdown.isActive():
+            pipeline._tick()
+
+    # 1. In VS Code: pinch to talk, Slack Sarah; the post carries the summary + the diff.
     gate.poll()
     assert overlay.isVisible()
     watcher.on_vision_event(PINCH)
     say_command("Slack Sarah asking her to review the dashboard fix")
-    assert overlay.bubble.proposal.title.endswith("Slack to Sarah")
-    overlay.bubble.primary.click()
-    assert [d.recipient for d in sent] == ["Sarah"]
+    assert overlay.bubble.proposal.title.endswith("Slack to Sarah") and overlay.orb.label() == "Sending in 2s"
+    countdown()
+    assert [d.recipient for d in sent] == ["Sarah"] and sent[0].code == DIFF and "2 line(s) added" in sent[0].message
+    assert overlay.orb.label() == "Sent ✓"
 
-    # 2. Switch to the browser: Pette hides, hotkey does nothing.
+    # 2. Switch to the browser: Pette hides, the hotkey does nothing.
     fg["exe"] = "chrome.exe"
     gate.poll()
     assert overlay.isHidden()
@@ -79,16 +71,13 @@ def test_full_session(qapp, monkeypatch, tmp_path):
     say_command("message Sarah saying tests pass now")
     assert "Slack (usual) to Sarah" in overlay.bubble.proposal.title
 
-    # 4. Walk away with the draft pending; come back to a nudge; pinch to re-dictate; send.
+    # 4. Walk away mid-countdown; come back to a nudge; pinch to cancel. Nothing sent.
     watcher.on_vision_event(FACE_AWAY)
-    watcher.poll()                                   # proactive offer is deferred while away
-    assert "stuck" not in overlay.bubble.title.text()
     watcher.on_vision_event(FACE_BACK)
-    assert overlay.bubble.title.text().startswith("Still send?")
+    assert overlay.bubble.title.text().startswith("Still sending?")
     watcher.on_vision_event(PINCH)
-    say_command("Slack Sarah saying all tests pass now")
-    overlay.bubble.primary.click()
-    assert sent[-1].message == "Hi Sarah, all tests pass now in dashboard.py. Thanks!" and len(sent) == 2
+    countdown()
+    assert len(sent) == 1 and overlay.orb.label() == "Not sent"
 
     # 5. Eyes closed: Pette mirrors (only while idle).
     overlay.dismiss()
@@ -96,40 +85,34 @@ def test_full_session(qapp, monkeypatch, tmp_path):
     assert overlay.pet.state == "blink"
     watcher.on_vision_event(EYES_OPEN)
 
-    # 6. Persistent IDE error -> proactive offer -> investigate -> agent proposal -> read-only result.
-    watcher.poll()
-    assert overlay.bubble.proposal.action_label == "Investigate"
-    overlay.bubble.primary.click()
-    assert overlay.bubble.proposal.action_label == "Ask Claude Code"
-    overlay.bubble.primary.click()
-    task = agent.tasks[0]
-    assert task.file_path == AF.path and task.file_text and "NoneType" in task.diagnostics[0]
-    assert shown and shown[0].startswith("--- a/dashboard.py")
-
-    # 7. Pause: everything stops; camera-driven pinch is ignored.
+    # 6. Pause: everything stops; camera-driven pinch is ignored.
     overlay.set_paused(True)
     watcher.on_vision_event(PINCH)
     assert not pipeline.busy and not overlay.bubble.isVisible()
     overlay.set_paused(False)
 
-    # 8. The world model learned from the session; no message text was stored.
+    # 7. The world model learned from the session and the window shows it; no message text was stored.
     assert world.preferred_platform("sarah") == "slack"
-    assert world.presence_today()["pinches"] == 2
-    assert store.query("SELECT outcome FROM offers ORDER BY ts") == [("shown",), ("accepted",), ("accepted",)]
+    assert world.presence_today()["pinches"] == 2              # the paused pinch is not logged
+    data = win.data()
+    assert data["outcomes"]["sent"] == 1 and data["outcomes"]["cancelled"] == 1
+    assert data["contacts"][0]["name"] == "Sarah" and data["live"]["state"] == "idle"
+    assert any("Slack" in r["then"] for r in data["rules"])
     dump = " ".join(str(r) for t in ("events", "messages", "offers") for r in store.query(f"SELECT * FROM {t}"))
-    assert "tests pass" not in dump and "review" not in dump
+    assert "tests pass" not in dump and "review" not in dump and "user is None" not in dump
+    assert "tests pass" not in str(data) and "user is None" not in str(data)
     store.close()
 
 
 @pytest.mark.parametrize("flags", [["--demo"], ["--demo", "--always-show"]])
 def test_main_launches_and_stays_up(flags, tmp_path):
-    """The real entry point starts, builds the tray/watchers/db, and keeps running."""
+    """The real entry point starts, builds the tray/watchers/db/world window, and keeps running."""
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "FLOWSTATE_DB": str(tmp_path / "c.sqlite3")}
     proc = subprocess.Popen([sys.executable, str(ROOT / "main.py"), *flags], cwd=ROOT, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         with pytest.raises(subprocess.TimeoutExpired):
-            proc.wait(timeout=6)                       # still running after 6 s = healthy
+            proc.wait(timeout=8)                       # still running after 8 s = healthy
     finally:
         proc.kill()
         _, err = proc.communicate()

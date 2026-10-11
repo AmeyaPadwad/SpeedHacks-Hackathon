@@ -1,4 +1,4 @@
-"""Webcam signals mapped onto the message workflow, plus world-model learning from that workflow."""
+"""Webcam signals mapped onto the one workflow, plus world-model learning from it."""
 import pytest
 
 from db import Store, WorldModel
@@ -26,11 +26,11 @@ def rig(qapp, monkeypatch, tmp_path):
     world = WorldModel(store)
     o = Overlay(tray=False)
     sent = []
-    p = Pipeline(o, OfflineBrain(), capture=lambda: Context(None, None), use_voice=False,
+    p = Pipeline(o, OfflineBrain(), capture=lambda: Context(None), use_voice=False,
                  send=lambda d: sent.append(d) or "Sent.", configured=lambda _: True,
-                 spawn=lambda f: f(), capture_delay_ms=0, memory=store, world=world)
+                 spawn=lambda f: f(), memory=store, world=world, send_delay_s=3)
     clock = Clock()
-    w = Watcher(o, lambda: p.busy, read_file=lambda: None, memory=store, world=world, clock=clock)
+    w = Watcher(o, memory=store, world=world, clock=clock)
     yield o, p, w, store, world, sent, clock
     store.close()
 
@@ -40,21 +40,27 @@ def type_command(o, text):
     o.bubble.primary.click()
 
 
+def finish(p):
+    while p._countdown.isActive():
+        p._tick()
+
+
 def test_pinch_is_push_to_talk(rig):
     o, p, w, *_ = rig
     w.on_vision_event(PINCH)
-    assert p.busy and o.bubble.asking                      # same as pressing the hotkey
+    assert p.busy and o.bubble.asking                      # same as clicking Pette
 
 
-def test_pinch_on_draft_redictates_and_never_sends(rig):
+def test_pinch_cancels_pending_send_and_never_sends(rig):
     o, p, w, store, world, sent, _ = rig
     w.on_vision_event(PINCH)
     type_command(o, "Slack Sarah asking her to review the PR")
-    first = o.bubble.proposal.id
-    w.on_vision_event(PINCH)                               # re-dictate
-    assert sent == [] and first not in p.pending and o.bubble.asking
+    w.on_vision_event(PINCH)                               # cancel during the countdown
+    finish(p)
+    assert sent == [] and p.state == "cancelled"
+    w.on_vision_event(PINCH)
     type_command(o, "Slack Sarah saying the PR is merged")
-    o.bubble.primary.click()                               # only a click sends
+    finish(p)                                              # countdown runs out -> dispatched
     assert [d.message for d in sent] == ["Hi Sarah, the PR is merged. Thanks!"]
     assert store.query("SELECT outcome FROM messages ORDER BY ts") == [("drafted",), ("cancelled",), ("drafted",),
                                                                       ("sent",)]
@@ -67,17 +73,15 @@ def test_pinch_dismisses_plain_message(rig):
     assert not o.bubble.isVisible()
 
 
-def test_away_keeps_draft_and_nudges_on_return(rig):
+def test_away_and_back_nudges_pending_send(rig):
     o, p, w, store, world, sent, clock = rig
     p.trigger()
     type_command(o, "Discord Ameya saying standup moved to 10")
     pid = o.bubble.proposal.id
     w.on_vision_event(FACE_AWAY)
-    assert o.pet.state != "away" or o.bubble.proposal      # draft still showing while away
     clock.t = 42.0
     w.on_vision_event(FACE_BACK)
-    assert o.bubble.proposal.id == pid and pid in p.pending and sent == []
-    assert o.bubble.title.text().startswith("Still send?")
+    assert o.bubble.proposal.id == pid and o.bubble.title.text().startswith("Still sending?")
     assert store.query("SELECT duration FROM events WHERE kind = 'away_ended'") == [(42.0,)]
 
 
@@ -107,7 +111,7 @@ def test_named_platform_beats_learned_one(rig):
     assert o.bubble.proposal.title.endswith(" Slack to Sarah")
 
 
-def test_gpt_draft_is_rerouted_to_usual_platform(qapp, monkeypatch, tmp_path):
+def test_model_draft_is_rerouted_to_usual_platform(qapp, monkeypatch, tmp_path):
     monkeypatch.setattr("pet.pipeline.MIN_INTERVAL_S", 0)
     store = Store(tmp_path / "c.sqlite3")
     store.log_message("sarah", "email", "sent")
@@ -119,8 +123,8 @@ def test_gpt_draft_is_rerouted_to_usual_platform(qapp, monkeypatch, tmp_path):
             return Draft("slack", "Sarah", "", "hi")             # model guessed slack
 
     o = Overlay(tray=False)
-    p = Pipeline(o, StubBrain(), capture=lambda: Context(None, None), use_voice=False, configured=lambda _: True,
-                 spawn=lambda f: f(), capture_delay_ms=0, memory=store, world=WorldModel(store))
+    p = Pipeline(o, StubBrain(), capture=lambda: Context(None), use_voice=False, configured=lambda _: True,
+                 spawn=lambda f: f(), memory=store, world=WorldModel(store))
     p.trigger()
     type_command(o, "tell Sarah hi")
     assert p.brain.contacts == {"sarah": "email"}                # contacts fed to the brain
@@ -128,20 +132,22 @@ def test_gpt_draft_is_rerouted_to_usual_platform(qapp, monkeypatch, tmp_path):
     store.close()
 
 
-def test_contacts_reach_gpt_prompt():
-    parts = build_messages("tell sarah hi", Context(None, None), {"sarah": "slack"})[1]["content"]
-    assert any("Sarah (slack)" in part.get("text", "") for part in parts)
+def test_contacts_reach_prompt():
+    text = build_messages("tell sarah hi", Context(None), {"sarah": "slack"})[1]["content"]
+    assert "Sarah (slack)" in text
     assert Brain().contacts == {}
 
 
-def test_offer_outcomes_feed_cooldown(rig):
+def test_world_model_sets_the_send_countdown(rig):
     o, p, w, store, world, sent, _ = rig
-    for _ in range(6):
-        p.offer_investigation("x")
-        o.bubble.cancel.click()
-    assert world.offer_cooldown_s() == 1800
-    w.poll()
-    assert w.policy.COOLDOWN_S == 1800                          # watcher applies the learned back-off
+    p._send_delay_s = None                                      # use the world model
+    assert p.delay_s() == 4.0
+    for outcome in ["cancelled"] * 3 + ["sent"] * 3:
+        store.log_message("sarah", "slack", outcome)
+    assert p.delay_s() == 6.0                                   # you cancel a lot: more time to catch it
+    for _ in range(60):
+        store.log_message("sarah", "slack", "sent")
+    assert p.delay_s() == 2.5                                   # you almost never cancel: snappier
 
 
 def test_calibrated_policy_and_baseline_meter():
@@ -160,5 +166,5 @@ def test_memory_off_logs_nothing(rig):
     store.enabled = False
     w.on_vision_event(PINCH)
     type_command(o, "Slack Sarah saying hi")
-    o.bubble.primary.click()
+    finish(p)
     assert sum(store.counts().values()) == 0

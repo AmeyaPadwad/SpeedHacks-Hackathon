@@ -1,17 +1,18 @@
-"""Module 2: context capture. One-shot screenshot (messages only) plus the active-file snapshot from the VS Code extension."""
+"""Module 2: context. The active-file snapshot from the VS Code extension plus its uncommitted git changes.
+
+No screenshots: messages carry the code itself and a summary of what changed.
+"""
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QIODevice, Qt
-from PySide6.QtGui import QGuiApplication, QPixmap
-
 ACTIVE_FILE = Path(os.environ.get("FLOWSTATE_ACTIVE_FILE") or Path.home() / ".flowstate_current.json")
-MAX_EDGE = 1280
-JPEG_QUALITY = 75
 MAX_FILE_CHARS = 12_000  # keep prompts bounded; the model gets the head of very large files
+MAX_DIFF_CHARS = 8_000
 MAX_DIAGNOSTICS = 20
+
 
 @dataclass(frozen=True)
 class Diagnostic:
@@ -42,29 +43,8 @@ class ActiveFile:
 
 @dataclass
 class Context:
-    screenshot_jpeg: bytes | None
     active_file: ActiveFile | None
-
-
-def grab_screen() -> bytes | None:
-    """Capture the primary screen once as a downscaled JPEG for the message drafter.
-
-    Must run on the Qt main thread. The full-resolution frame is dropped before returning.
-    """
-    screen = QGuiApplication.primaryScreen()
-    if screen is None:
-        return None
-    pm = screen.grabWindow(0)
-    return None if pm.isNull() else encode_jpeg(pm)
-
-
-def encode_jpeg(pm: QPixmap) -> bytes:
-    if max(pm.width(), pm.height()) > MAX_EDGE:
-        pm = pm.scaled(MAX_EDGE, MAX_EDGE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    buf = QBuffer()
-    buf.open(QIODevice.WriteOnly)
-    pm.save(buf, "JPEG", JPEG_QUALITY)
-    return bytes(buf.data())
+    changes: str = ""   # unified `git diff HEAD` of the active file; "" if clean, untracked handled as new
 
 
 def read_active_file(path: Path = ACTIVE_FILE) -> ActiveFile | None:
@@ -88,6 +68,32 @@ def read_active_file(path: Path = ACTIVE_FILE) -> ActiveFile | None:
         return None
 
 
+def git_changes(af: ActiveFile | None, run=subprocess.run) -> str:
+    """Uncommitted changes to the active file as a unified diff; "" when clean, not a repo, or git is missing."""
+    if af is None or not af.path:
+        return ""
+    p = Path(af.path)
+    if not p.parent.is_dir():
+        return ""
+
+    def git(*args) -> str | None:
+        try:
+            r = run(["git", *args], cwd=p.parent, capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout if r.returncode == 0 else None
+
+    diff = git("diff", "--no-color", "--no-ext-diff", "HEAD", "--", p.name)
+    if diff is None:
+        return ""
+    if not diff.strip() and (git("status", "--porcelain", "--", p.name) or "").startswith("??"):
+        body = "\n".join("+" + line for line in af.content.splitlines())
+        diff = f"new file {p.name} (untracked)\n{body}"
+    return diff.strip()[:MAX_DIFF_CHARS]
+
+
 def capture() -> Context:
-    """Message flow: screenshot + active file. The investigate flow uses read_active_file() only."""
-    return Context(screenshot_jpeg=grab_screen(), active_file=read_active_file())
+    """Safe off the Qt thread: just file reads and a git call."""
+    af = read_active_file()
+    return Context(af, git_changes(af))

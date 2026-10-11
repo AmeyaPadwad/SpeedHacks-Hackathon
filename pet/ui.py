@@ -1,30 +1,60 @@
-"""Floating overlay: Pette sprite, speech bubble, confirmation buttons, tray."""
+"""Floating overlay: speech bubble, the camera orb, and the Pette sprite, stacked bottom-anchored.
+
+Styling follows shadcn/ui (zinc palette, 12px radius, hairline borders, soft shadow) with two
+Aceternity-style touches painted in Qt: a rotating gradient "moving border" on the bubble while a send
+is counting down, and a glowing conic ring around the camera orb that changes colour with the status.
+"""
 import math
 import uuid
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QAction, QBrush, QColor, QConicalGradient, QFont, QGuiApplication, QIcon, QImage, QPainter, QPainterPath, QPen,
+)
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
-    QSystemTrayIcon, QVBoxLayout, QWidget,
+    QApplication, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon,
+    QVBoxLayout, QWidget,
 )
 
 from .sprites import ANIMATIONS, SpriteSheet
 
-MINT, CREAM, INK = "#7CF2C4", "#FCF5E8", "#1E1E1E"
+# shadcn/ui zinc tokens
+BG, FG, MUTED, BORDER, RING = "#ffffff", "#09090b", "#71717a", "#e4e4e7", "#18181b"
+SECONDARY = "#f4f4f5"
+FONT = "'Inter', 'Segoe UI Variable Text', 'Segoe UI', sans-serif"
+# status -> (ring colour, label)
+STATUS = {
+    "idle": ("#a1a1aa", ""),
+    "listening": ("#8b5cf6", "Listening"),
+    "thinking": ("#3b82f6", "Thinking"),
+    "pending": ("#f59e0b", "Sending in {d}s"),
+    "sending": ("#3b82f6", "Sending"),
+    "sent": ("#22c55e", "Sent ✓"),
+    "cancelled": ("#71717a", "Not sent"),
+    "failed": ("#ef4444", "Not sent"),
+}
 SPRITE_SCALE = 0.9
 FPS = 15
 FRAME_MS = 450  # how long each animation frame holds
+ORB = 116       # camera orb diameter
 
 
 @dataclass
 class Proposal:
-    """A drafted action shown for approval. Nothing runs until the user clicks the action button."""
+    """A drafted message. With `countdown`, it sends itself when the timer ends unless cancelled."""
     title: str
     body: str
     action_label: str = "Send"
+    countdown: bool = False
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+
+def _font(px: int, weight=QFont.Normal) -> QFont:
+    f = QFont(["Inter", "Segoe UI Variable Text", "Segoe UI"])
+    f.setPixelSize(px)
+    f.setWeight(weight)
+    return f
 
 
 class PetWidget(QWidget):
@@ -41,7 +71,8 @@ class PetWidget(QWidget):
         self._moved = False
         w, h = int(sheet.cell_w * SPRITE_SCALE), int(sheet.cell_h * SPRITE_SCALE)
         self.setFixedSize(w + 8, h + 14)
-        self.setCursor(Qt.OpenHandCursor)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to talk")
         self._timer = QTimer(self, interval=1000 // FPS, timeout=self._advance)
         self._timer.start()
 
@@ -62,20 +93,13 @@ class PetWidget(QWidget):
         t = self._tick / FPS
         sleeping = self.state in ("sleeping", "away")
         bob = 0 if sleeping else round(math.sin(t * 2.2) * 2)
-        if self.camera_on:  # visible indicator whenever the webcam is in use
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(MINT))
-            p.drawEllipse(8, 8, 9, 9)
         if sleeping:
             p.setOpacity(0.7)
         p.drawPixmap(QRect(4, 6 + bob, self.width() - 8, self.height() - 14), self.sheet.frames[frame])
         if sleeping:
             p.setOpacity(1)
-            p.setPen(QColor(MINT))
-            f = p.font()
-            f.setPointSize(13)
-            f.setItalic(True)
-            p.setFont(f)
+            p.setPen(QColor("#8b5cf6"))
+            p.setFont(_font(16, QFont.DemiBold))
             off = int(t * 8) % 14
             p.drawText(self.width() - 40, 34 - off // 2, "z")
             p.drawText(self.width() - 26, 22 - off // 2, "Z")
@@ -84,25 +108,140 @@ class PetWidget(QWidget):
         if e.button() == Qt.LeftButton:
             self._press = e.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
             self._moved = False
-            self.setCursor(Qt.ClosedHandCursor)
 
     def mouseMoveEvent(self, e):
         if self._press is not None:
             target = e.globalPosition().toPoint() - self._press
             if (target - self.window().pos()).manhattanLength() > 3:
                 self._moved = True
+                self.setCursor(Qt.ClosedHandCursor)
             self.window().move(target)
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton and self._press is not None:
             self._press = None
-            self.setCursor(Qt.OpenHandCursor)
+            self.setCursor(Qt.PointingHandCursor)
             if not self._moved:
                 self.clicked.emit()
 
 
-class Bubble(QFrame):
-    """Speech bubble: message text, action/Cancel buttons for a proposal, or a typed-command field."""
+class Orb(QWidget):
+    """Camera circle above Pette: you (mirrored webcam, local only), your hand skeleton and gesture,
+    and a glowing status ring (listening / sending in Ns / sent / not sent)."""
+    HAND_EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11),
+                  (11, 12), (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17)]
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(ORB + 28, ORB + 40)
+        self.image: QImage | None = None
+        self.hand: list[tuple[float, float]] = []
+        self.gesture = ""
+        self.camera_on = False
+        self.state, self.detail = "idle", ""
+        self.level = 0.0
+        self._phase = 0.0
+        self._timer = QTimer(self, interval=33, timeout=self._spin)
+        self._timer.start()
+        self.setToolTip("Camera: processed on this PC, never stored or uploaded")
+
+    def set_frame(self, frame: dict):
+        """{'image': QImage, 'hand': [(x, y)...] 0..1, 'gesture': str} from the camera thread (queued)."""
+        self.image = frame.get("image")
+        self.hand = frame.get("hand") or []
+        self.gesture = frame.get("gesture") or ""
+        self.update()
+
+    def set_camera(self, on: bool):
+        self.camera_on = on
+        if not on:
+            self.image, self.hand, self.gesture = None, [], ""
+        self.update()
+
+    def set_status(self, state: str, detail: str = ""):
+        self.state, self.detail = state, detail
+        self.update()
+
+    def label(self) -> str:
+        text = STATUS.get(self.state, STATUS["idle"])[1]
+        return text.format(d=self.detail) if "{d}" in text else text
+
+    def _spin(self):
+        speed = 6 if self.state in ("listening", "thinking", "sending", "pending") else 1.2
+        self._phase = (self._phase + speed) % 360
+        self.level *= 0.85
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        color = QColor(STATUS.get(self.state, STATUS["idle"])[0])
+        cx, cy, r = self.width() / 2, ORB / 2 + 12, ORB / 2
+        # glow + rotating conic ring (Aceternity "moving border")
+        glow = QColor(color)
+        for i, a in enumerate((26, 16, 8)):
+            glow.setAlpha(a + int(self.level * 60))
+            p.setPen(QPen(glow, 6 + i * 5))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), r + 2, r + 2)
+        grad = QConicalGradient(QPointF(cx, cy), self._phase)
+        light = QColor(color).lighter(150)
+        grad.setColorAt(0.0, color)
+        grad.setColorAt(0.35, QColor(color.red(), color.green(), color.blue(), 40))
+        grad.setColorAt(0.6, light)
+        grad.setColorAt(1.0, color)
+        p.setPen(QPen(QBrush(grad), 3.5 + self.level * 3))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        # inner: webcam or placeholder
+        clip = QPainterPath()
+        clip.addEllipse(QPointF(cx, cy), r - 3, r - 3)
+        p.save()
+        p.setClipPath(clip)
+        inner = QRectF(cx - r + 3, cy - r + 3, 2 * r - 6, 2 * r - 6)
+        if self.image is not None and not self.image.isNull():
+            p.drawImage(inner, self.image)
+            if self.hand:
+                p.setPen(QPen(QColor(255, 255, 255, 220), 1.6))
+                pts = [QPointF(inner.left() + x * inner.width(), inner.top() + y * inner.height()) for x, y in self.hand]
+                for a, b in self.HAND_EDGES:
+                    if a < len(pts) and b < len(pts):
+                        p.drawLine(pts[a], pts[b])
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor("#a78bfa"))
+                for pt in pts:
+                    p.drawEllipse(pt, 2.2, 2.2)
+        else:
+            p.fillRect(inner, QColor("#f4f4f5"))
+            p.setPen(QPen(QColor("#a1a1aa"), 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPointF(cx, cy - 10), 15, 15)
+            p.drawArc(QRectF(cx - 28, cy + 10, 56, 44), 0, 180 * 16)
+            p.setFont(_font(10))
+            p.setPen(QColor(MUTED))
+            p.drawText(inner.adjusted(0, 0, 0, -12), Qt.AlignHCenter | Qt.AlignBottom,
+                       "camera off" if not self.camera_on else "starting…")
+        p.restore()
+        # gesture chip (top) and status pill (bottom), shadcn Badge style
+        if self.gesture:
+            self._pill(p, self.gesture, cx, cy - r + 4, QColor(255, 255, 255, 235), QColor(FG), QColor(BORDER))
+        text = self.label()
+        if text:
+            self._pill(p, text, cx, cy + r + 2, color, QColor("white"), color)
+
+    @staticmethod
+    def _pill(p: QPainter, text: str, cx: float, cy: float, bg: QColor, fg: QColor, border: QColor):
+        p.setFont(_font(11, QFont.DemiBold))
+        w = p.fontMetrics().horizontalAdvance(text) + 16
+        rect = QRectF(cx - w / 2, cy - 10, w, 20)
+        p.setPen(QPen(border, 1))
+        p.setBrush(bg)
+        p.drawRoundedRect(rect, 10, 10)
+        p.setPen(fg)
+        p.drawText(rect, Qt.AlignCenter, text)
+
+
+class Bubble(QWidget):
+    """Speech bubble (shadcn Card): title, text, optional typed-command field, Cancel / Send now buttons."""
     approved = Signal(str)
     cancelled = Signal(str)
     submitted = Signal(str)
@@ -110,22 +249,24 @@ class Bubble(QFrame):
 
     def __init__(self):
         super().__init__()
-        self.setObjectName("bubble")
-        self.setFixedWidth(300)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedWidth(320)
         self.setStyleSheet(f"""
-            #bubble {{ background: {CREAM}; border: 2px solid {INK}; border-radius: 14px; }}
-            QLabel {{ color: {INK}; font-family: 'Segoe UI'; background: transparent; }}
-            #title {{ font-size: 10pt; font-weight: 600; color: #3C7A62; }}
-            #body {{ font-size: 11pt; }}
-            QPushButton {{ font-family: 'Segoe UI'; font-size: 10pt; padding: 6px 14px;
-                          border-radius: 8px; border: 1px solid {INK}; background: white; color: {INK}; }}
-            QPushButton:hover {{ background: #EFE6D2; }}
-            QPushButton#primary {{ background: {INK}; color: {MINT}; font-weight: 600; }}
-            QPushButton#primary:hover {{ background: #333; }}
-            QPushButton:disabled {{ background: #D8D2C4; color: #8A8A8A; border-color: #8A8A8A; }}
-            QLineEdit {{ font-family: 'Segoe UI'; font-size: 11pt; padding: 5px 8px; border-radius: 8px;
-                        border: 1px solid {INK}; background: white; color: {INK}; }}
+            QLabel {{ color: {FG}; font-family: {FONT}; background: transparent; }}
+            QLabel#title {{ font-size: 12px; font-weight: 600; color: {MUTED}; letter-spacing: 0.2px; }}
+            QLabel#body {{ font-size: 14px; }}
+            QPushButton {{ font-family: {FONT}; font-size: 13px; font-weight: 500; padding: 6px 12px;
+                          border-radius: 8px; border: 1px solid {BORDER}; background: {BG}; color: {FG}; }}
+            QPushButton:hover {{ background: {SECONDARY}; }}
+            QPushButton#primary {{ background: {RING}; color: #fafafa; border-color: {RING}; }}
+            QPushButton#primary:hover {{ background: #27272a; }}
+            QPushButton:disabled {{ background: {SECONDARY}; color: #a1a1aa; border-color: {BORDER}; }}
+            QLineEdit {{ font-family: {FONT}; font-size: 14px; padding: 7px 10px; border-radius: 8px;
+                        border: 1px solid {BORDER}; background: {BG}; color: {FG}; }}
+            QLineEdit:focus {{ border: 1px solid #a1a1aa; }}
         """)
+        shadow = QGraphicsDropShadowEffect(self, blurRadius=28, offset=QPointF(0, 6), color=QColor(0, 0, 0, 45))
+        self.setGraphicsEffect(shadow)
         self.title = QLabel(objectName="title")
         self.body = QLabel(objectName="body", wordWrap=True, textInteractionFlags=Qt.TextSelectableByMouse)
         self.input = QLineEdit()
@@ -134,44 +275,50 @@ class Bubble(QFrame):
         self.primary = QPushButton(objectName="primary")
         self.cancel = QPushButton("Cancel")
         row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(0, 4, 0, 0)
         row.addStretch()
         row.addWidget(self.cancel)
         row.addWidget(self.primary)
         self.buttons = QWidget()
         self.buttons.setLayout(row)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 10, 14, 12)
+        lay.setContentsMargins(16, 12, 16, 14)
         lay.setSpacing(6)
         for w in (self.title, self.body, self.input, self.buttons):
             lay.addWidget(w)
         self.proposal: Proposal | None = None
         self.asking = False
+        self.progress = None          # 0..1 countdown remaining, drawn as a bar under the card
+        self._phase = 0.0
+        self._border = QTimer(self, interval=33, timeout=self._spin)
         self.primary.clicked.connect(self._approve)
         self.cancel.clicked.connect(self._cancel)
 
+    # --- content ----------------------------------------------------------
     def show_text(self, text: str, title: str = ""):
         self.proposal = None
         self.asking = False
-        self.title.setText(title)
-        self.title.setVisible(bool(title))
+        self._set_title(title)
         self.body.setText(text)
         self.input.hide()
         self.buttons.hide()
+        self._glow(False)
         self.show()
 
     def show_input(self, prompt: str):
         self.proposal = None
         self.asking = True
-        self.title.hide()
+        self._set_title("")
         self.body.setText(prompt)
         self.input.clear()
-        self.input.setPlaceholderText("e.g. Slack Sarah asking her to review this file")
+        self.input.setPlaceholderText("e.g. Slack Sarah what I changed in this file")
         self.input.show()
         self.primary.setText("Go")
+        self.cancel.setText("Cancel")
         self.primary.setEnabled(True)
         self.cancel.setEnabled(True)
         self.buttons.show()
+        self._glow(False)
         self.show()
         self.input.setFocus()
 
@@ -179,21 +326,35 @@ class Bubble(QFrame):
         self.proposal = p
         self.asking = False
         self.input.hide()
-        self.title.setText(p.title)
-        self.title.show()
+        self._set_title(p.title)
         self.body.setText(p.body)
         self.primary.setText(p.action_label)
+        self.cancel.setText("Cancel")
         self.primary.setEnabled(True)
         self.cancel.setEnabled(True)
         self.buttons.show()
+        self._glow(p.countdown)
         self.show()
 
-    def _consume(self) -> str | None:
-        """Single-use approval bound to the displayed proposal id."""
+    def set_countdown(self, left: int, total: int):
+        self.progress = max(0.0, left / max(1, total))
+        self.cancel.setText(f"Cancel · {left}s")
+        self.update()
+
+    def _set_title(self, title: str):
+        self.title.setText(title)
+        self.title.setVisible(bool(title))
+
+    # --- actions ----------------------------------------------------------
+    def consume(self) -> str | None:
+        """Single-use decision bound to the displayed proposal id."""
         p, self.proposal = self.proposal, None
         self.primary.setEnabled(False)
         self.cancel.setEnabled(False)
+        self._glow(False)
         return p.id if p else None
+
+    _consume = consume
 
     def _submit(self):
         text = self.input.text().strip()
@@ -205,7 +366,7 @@ class Bubble(QFrame):
     def _approve(self):
         if self.asking:
             self._submit()
-        elif (pid := self._consume()) is not None:
+        elif (pid := self.consume()) is not None:
             self.approved.emit(pid)
 
     def _cancel(self):
@@ -213,83 +374,76 @@ class Bubble(QFrame):
             self.asking = False
             self.input.hide()
             self.input_cancelled.emit()
-        elif (pid := self._consume()) is not None:
+        elif (pid := self.consume()) is not None:
             self.cancelled.emit(pid)
 
+    # --- paint (card + moving border + countdown bar) ---------------------
+    def _glow(self, on: bool):
+        if on:
+            self._border.start()
+        else:
+            self._border.stop()
+            self.progress = None
+        self.update()
 
-class ResultPanel(QWidget):
-    """Read-only view of a coding agent's proposal. Copy is the only action; nothing is applied."""
+    def _spin(self):
+        self._phase = (self._phase + 4) % 360
+        self.update()
 
-    def __init__(self):
-        super().__init__(None, Qt.Window | Qt.WindowStaysOnTopHint)
-        self.setWindowTitle("Pette · agent proposal")
-        self.resize(720, 560)
-        self.setStyleSheet(f"""
-            QWidget {{ background: {CREAM}; color: {INK}; font-family: 'Segoe UI'; }}
-            QLabel#head {{ font-size: 11pt; font-weight: 600; color: #3C7A62; }}
-            QLabel#note {{ font-size: 9pt; color: #6E6E6E; }}
-            QPlainTextEdit {{ background: white; border: 1px solid {INK}; border-radius: 8px;
-                             font-family: 'Cascadia Mono', Consolas, monospace; font-size: 10pt; padding: 6px; }}
-            QPushButton {{ font-size: 10pt; padding: 6px 14px; border-radius: 8px; border: 1px solid {INK};
-                          background: white; }}
-            QPushButton#primary {{ background: {INK}; color: {MINT}; font-weight: 600; }}
-        """)
-        self.head = QLabel(objectName="head")
-        self.note = QLabel("Proposal only. Nothing has been applied to your files.", objectName="note")
-        self.text = QPlainTextEdit(readOnly=True)
-        copy = QPushButton("Copy", objectName="primary")
-        close = QPushButton("Close")
-        copy.clicked.connect(self._copy)
-        close.clicked.connect(self.hide)
-        row = QHBoxLayout()
-        row.addWidget(self.note)
-        row.addStretch()
-        row.addWidget(close)
-        row.addWidget(copy)
-        lay = QVBoxLayout(self)
-        lay.addWidget(self.head)
-        lay.addWidget(self.text, 1)
-        lay.addLayout(row)
-
-    def show_result(self, title: str, text: str):
-        self.head.setText(title)
-        self.text.setPlainText(text)
-        self.show()
-        self.raise_()
-        self.activateWindow()
-
-    def _copy(self):
-        QApplication.clipboard().setText(self.text.toPlainText())
-        self.note.setText("Copied to clipboard.")
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        path = QPainterPath()
+        path.addRoundedRect(r, 12, 12)
+        p.fillPath(path, QColor(BG))
+        if self._border.isActive():
+            grad = QConicalGradient(r.center(), self._phase)
+            for stop, c in ((0.0, "#f59e0b"), (0.25, "#ec4899"), (0.5, "#8b5cf6"), (0.75, "#3b82f6"), (1.0, "#f59e0b")):
+                grad.setColorAt(stop, QColor(c))
+            p.setPen(QPen(QBrush(grad), 2))
+        else:
+            p.setPen(QPen(QColor(BORDER), 1))
+        p.drawPath(path)
+        if self.progress is not None:
+            track = QRectF(r.left() + 16, r.bottom() - 6, r.width() - 32, 3)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(SECONDARY))
+            p.drawRoundedRect(track, 1.5, 1.5)
+            p.setBrush(QColor(RING))
+            p.drawRoundedRect(QRectF(track.left(), track.top(), track.width() * self.progress, 3), 1.5, 1.5)
 
 
 class Overlay(QWidget):
-    """Frameless always-on-top window: bubble above the pet, bottom edge anchored."""
+    """Frameless always-on-top window: bubble, camera orb and Pette, bottom edge anchored."""
     approved = Signal(str)
     cancelled = Signal(str)
     ask_requested = Signal()
     pause_toggled = Signal(bool)
     text_submitted = Signal(str)
     input_cancelled = Signal()
-    investigate_requested = Signal()
-    pinch_on_proposal = Signal(str)   # proposal id; pipeline decides (re-dictate drafts, ignore the rest)
+    pinch_on_proposal = Signal(str)   # proposal id; the pipeline cancels a pending send
+    world_requested = Signal()
 
     def __init__(self, sheet: SpriteSheet | None = None, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.pet = PetWidget(sheet or SpriteSheet())
+        self.orb = Orb()
         self.bubble = Bubble()
         self.bubble.hide()
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(4)
+        lay.setContentsMargins(14, 14, 14, 8)
+        lay.setSpacing(2)
         lay.addWidget(self.bubble, 0, Qt.AlignHCenter)
+        lay.addWidget(self.orb, 0, Qt.AlignHCenter)
         lay.addWidget(self.pet, 0, Qt.AlignHCenter)
         self.paused = False
         self.context_allowed = True   # False while the foreground app isn't VS Code / a terminal (FocusGate)
         self.away = self.eyes_closed = False
         self._base_state = "idle"
+        self._countdown_total = 0
         self.bubble.approved.connect(self._decided(self.approved))
         self.bubble.cancelled.connect(self._decided(self.cancelled))
         self.bubble.submitted.connect(self.text_submitted)
@@ -310,8 +464,22 @@ class Overlay(QWidget):
             state = "blink"
         self.pet.set_state(state)
 
+    def set_status(self, state: str, detail: str = ""):
+        """Workflow status from the pipeline: drives the orb ring/pill and Pette's pose."""
+        self.orb.set_status(state, detail)
+        pose = {"listening": "listening", "thinking": "thinking", "pending": "speaking", "sending": "thinking",
+                "sent": "speaking"}.get(state, "idle")
+        self.set_state(pose)
+
+    def set_level(self, level: float):
+        self.orb.level = max(self.orb.level, level)
+
+    def set_countdown(self, left: int):
+        self._countdown_total = max(self._countdown_total, left)
+        self.bubble.set_countdown(left, self._countdown_total)
+
     def set_context_allowed(self, allowed: bool):
-        """Hide Pette outside VS Code / terminals; pending proposals stay pending until she reappears."""
+        """Hide Pette outside VS Code / terminals; a pending send keeps counting down."""
         self.context_allowed = allowed
         if allowed:
             self.show()
@@ -319,7 +487,6 @@ class Overlay(QWidget):
             self.hide()
 
     def reveal(self):
-        """Show again after a temporary hide (e.g. screenshot), unless the focus gate says otherwise."""
         if self.context_allowed:
             self.show()
 
@@ -330,34 +497,32 @@ class Overlay(QWidget):
 
     def set_camera_indicator(self, on: bool):
         self.pet.camera_on = on
-        self.pet.setToolTip("Camera on: processed locally, never uploaded" if on else "")
-        self.pet.update()
+        self.orb.set_camera(on)
 
     def pinch(self):
-        """Gesture control for the message workflow. A gesture never approves (sends) anything.
+        """Gesture control. A gesture never sends anything.
 
-        - idle: push-to-talk (same as the hotkey)
+        - idle: start listening (same as clicking Pette)
         - plain message showing: dismiss it
-        - proposal pending: ask the pipeline to re-dictate (it only does so for message drafts)
+        - a send counting down: cancel it
         - typing a command: ignored
         """
         if self.paused or self.bubble.asking or not self.context_allowed:
             return
         if self.bubble.proposal:
             self.pinch_on_proposal.emit(self.bubble.proposal.id)
-        elif self.bubble.isVisible():
+        elif self.bubble.isVisible() and self.orb.state not in ("listening", "thinking", "sending"):
             self.dismiss()
         else:
             self.ask_requested.emit()
 
     def nudge(self):
-        """Bring a pending proposal back to attention (e.g. when the user returns to the camera)."""
+        """Back from being away: bring a pending send to attention."""
         p = self.bubble.proposal
-        if self.paused or p is None or self.bubble.isHidden():   # isHidden: works while Pette herself is hidden
+        if self.paused or p is None or self.bubble.isHidden():
             return
         if not self.bubble.title.text().startswith("Still "):
-            self.bubble.title.setText(f"Still {p.action_label.lower()}? · {p.title}")
-        self.set_state("speaking")
+            self.bubble.title.setText(f"Still sending? · {p.title}")
         self.raise_()
 
     def add_menu_action(self, text: str, slot=None, *, checkable=False, checked=False) -> QAction | None:
@@ -382,22 +547,20 @@ class Overlay(QWidget):
         if self.paused:
             return
         self._reanchor(lambda: self.bubble.show_text(text, title))
-        self.set_state("speaking")
         self._arm_hide(seconds)
 
     def propose(self, p: Proposal):
         if self.paused:
             return
+        self._countdown_total = 0
         self._reanchor(lambda: self.bubble.show_proposal(p))
-        self.set_state("speaking")
-        self._arm_hide(None)  # a pending approval never times out silently
+        self._arm_hide(None)
 
     def ask_text(self, prompt: str):
         """Typed-command fallback; the window takes focus so the user can type."""
         if self.paused:
             return
         self._reanchor(lambda: self.bubble.show_input(prompt))
-        self.set_state("idle")
         self._arm_hide(None)
         self.activateWindow()
         self.raise_()
@@ -407,13 +570,13 @@ class Overlay(QWidget):
         self._hide_timer.stop()
         self.bubble.proposal = None
         self.bubble.asking = False
+        self.bubble._glow(False)
         self._reanchor(self.bubble.hide)
-        self.set_state("idle")
 
     def set_paused(self, paused: bool):
         self.paused = paused
         if paused:
-            self.dismiss()  # also drops any pending proposal so it can't be approved later
+            self.dismiss()  # also drops any pending send so it can't fire later
         self.set_state("idle")
         if self._pause_action and self._pause_action.isChecked() != paused:
             self._pause_action.setChecked(paused)
@@ -433,7 +596,6 @@ class Overlay(QWidget):
     def _decided(self, signal):
         def handler(pid):
             signal.emit(pid)
-            self.set_state("idle")
         return handler
 
     def _on_input_cancelled(self):
@@ -441,11 +603,10 @@ class Overlay(QWidget):
         self.dismiss()
 
     def _on_pet_click(self):
-        if self.bubble.isVisible():
-            if not (self.bubble.proposal or self.bubble.asking):
-                self.dismiss()
-        elif not self.paused:
-            self.ask_requested.emit()
+        """Clicking Pette is the one way in: start listening (or stop, if she's already listening)."""
+        if self.paused or self.bubble.asking:
+            return
+        self.ask_requested.emit()
 
     def _reanchor(self, change):
         """Apply a bubble change, then resize keeping the pet fixed on screen."""
@@ -471,8 +632,8 @@ class Overlay(QWidget):
         tray = QSystemTrayIcon(icon, self)
         tray.setToolTip("Pette")
         menu = QMenu()
-        menu.addAction(QAction("Ask Pette", menu, triggered=self.ask_requested.emit))
-        menu.addAction(QAction("Investigate screen", menu, triggered=self.investigate_requested.emit))
+        menu.addAction(QAction("Talk to Pette", menu, triggered=self.ask_requested.emit))
+        menu.addAction(QAction("World model", menu, triggered=self.world_requested.emit))
         self._pause_action = QAction("Pause all", menu, checkable=True)
         self._pause_action.toggled.connect(lambda c: c != self.paused and self.set_paused(c))
         menu.addAction(self._pause_action)

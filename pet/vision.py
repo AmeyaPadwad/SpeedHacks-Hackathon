@@ -1,6 +1,7 @@
-"""Webcam CV (local only): face presence, eye closure and pinch -> debounced events.
+"""Webcam CV (local only): face presence, eye closure and pinch -> debounced events, plus a small
+preview (mirrored 168px crop, hand points, gesture name) for the orb above Pette.
 
-Frames, landmarks and blendshapes never leave this module; only event names are emitted.
+Nothing leaves this PC: the preview is only painted on screen, never stored, logged or uploaded.
 Gestures are explicit UI controls and never approve actions. Eye closure is a heuristic,
 not gaze, attention or emotion measurement.
 """
@@ -15,7 +16,7 @@ from .sprites import asset_path
 FACE_MODEL = asset_path("face_landmarker.task", folder="models")
 HAND_MODEL = asset_path("hand_landmarker.task", folder="models")
 CAMERA_INDEX = 0
-MAX_FPS = 10
+MAX_FPS = 15
 
 # Event names emitted by VisionPolicy / CameraWorker.
 FACE_AWAY, FACE_BACK = "face_away", "face_back"
@@ -112,6 +113,46 @@ def pinch_ratio(landmarks) -> float | None:
     return d(landmarks[4], landmarks[8]) / scale
 
 
+def gesture_name(landmarks) -> str:
+    """Coarse hand pose for the orb label: pinch, open hand, point, peace, fist (or "hand")."""
+    if landmarks is None or len(landmarks) < 21:
+        return ""
+    r = pinch_ratio(landmarks)
+    if r is not None and r < VisionPolicy.PINCH_ON:
+        return "pinch"
+    wrist = landmarks[0]
+    d = lambda a: math.hypot(a.x - wrist.x, a.y - wrist.y)
+    up = [d(landmarks[tip]) > d(landmarks[pip]) * 1.1 for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18))]
+    n = sum(up)
+    if n >= 4:
+        return "open hand"
+    if up == [True, False, False, False]:
+        return "point"
+    if up == [True, True, False, False]:
+        return "peace"
+    if n == 0:
+        return "fist"
+    return "hand"
+
+
+def preview(rgb, hand_landmarks, size: int = 168) -> dict:
+    """Small mirrored square crop + hand points (0..1, mirrored to match) for the orb. Local only."""
+    import cv2
+    from PySide6.QtGui import QImage
+    h, w = rgb.shape[:2]
+    side = min(h, w)
+    y0, x0 = (h - side) // 2, (w - side) // 2
+    crop = cv2.resize(rgb[y0:y0 + side, x0:x0 + side], (size, size), interpolation=cv2.INTER_AREA)
+    crop = cv2.flip(crop, 1).copy()
+    img = QImage(crop.data, size, size, 3 * size, QImage.Format_RGB888).copy()   # own the pixels
+    pts = []
+    if hand_landmarks:
+        for lm in hand_landmarks:
+            px, py = lm.x * w, lm.y * h
+            pts.append((1 - (px - x0) / side, (py - y0) / side))
+    return {"image": img, "hand": pts, "gesture": gesture_name(hand_landmarks)}
+
+
 def blink_scores(blendshapes) -> tuple[float, float]:
     scores = {c.category_name: c.score for c in blendshapes or []}
     return scores.get("eyeBlinkLeft", 0.0), scores.get("eyeBlinkRight", 0.0)
@@ -143,6 +184,7 @@ class CameraWorker(QThread):
     event = Signal(str)
     status = Signal(str)     # human-readable camera status for the UI
     baseline = Signal(dict)  # {"mean", "p95", "samples"} every ~30 s, for the world model
+    frame = Signal(object)   # preview() dict for the orb; display only
 
     def __init__(self, camera_index: int = CAMERA_INDEX, blink_on: float | None = None):
         super().__init__()
@@ -205,6 +247,7 @@ class CameraWorker(QThread):
                     self.event.emit(ev)
                 if (summary := meter.add(obs, policy.eyes_closed)) is not None:
                     self.baseline.emit(summary)
+                self.frame.emit(preview(rgb, hr.hand_landmarks[0] if hr.hand_landmarks else None))
                 del frame, rgb, image  # frames are never kept
                 time.sleep(max(0.0, period - (time.monotonic() - start)))
         finally:

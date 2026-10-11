@@ -5,7 +5,6 @@ import os
 from . import llm
 
 HOTKEY = os.environ.get("FLOWSTATE_HOTKEY") or "ctrl+shift+space"
-INVESTIGATE_HOTKEY = os.environ.get("FLOWSTATE_INVESTIGATE_HOTKEY") or "ctrl+alt+space"
 LISTEN_TIMEOUT_S = 6      # wait this long for speech to start
 PHRASE_LIMIT_S = 20       # hard cap on one command
 TRANSCRIBE_TIMEOUT_S = 20

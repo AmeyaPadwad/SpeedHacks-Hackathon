@@ -57,13 +57,12 @@ def test_pipeline_ignores_triggers_outside_allowed_apps(qapp):
     from pet.pipeline import Pipeline
     o = Overlay(tray=False)
     calls = []
-    p = Pipeline(o, capture=lambda: calls.append(1) or Context(None, None), use_voice=False,
-                 spawn=lambda f: f(), capture_delay_ms=0)
+    p = Pipeline(o, listen=lambda *a: calls.append(1) or "hi", capture=lambda: Context(None),
+                 spawn=lambda f: f())
     o.set_context_allowed(False)
     p.trigger()
-    p.investigate()
-    p.offer_investigation("x")
     assert calls == [] and not p.busy and o.bubble.proposal is None
     o.set_context_allowed(True)
+    p.brain = type("B", (), {"draft": lambda self, c, ctx: __import__("pet.brain").brain.Draft("none", "", "", "ok")})()
     p.trigger()
     assert calls == [1]

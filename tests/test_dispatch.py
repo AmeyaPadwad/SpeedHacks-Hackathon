@@ -67,3 +67,30 @@ def test_load_contacts(tmp_path):
     f.write_text(json.dumps({"Sarah ": {"slack": "U1"}, "bad": "x"}))
     assert dp.load_contacts(f) == {"sarah": {"slack": "U1"}}
     assert dp.load_contacts(tmp_path / "missing.json") == {}
+
+
+def coded(platform="slack", code="+    check_token()\n" * 3):
+    return Draft(platform, "Sarah", "", "Added a token check to login.", code=code,
+                 code_label="auth.py · uncommitted changes", code_lang="diff")
+
+
+def test_slack_post_carries_summary_and_code(monkeypatch, posts):
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.example/s")
+    dp.dispatch(coded(), {"sarah": {"slack": "U1"}})
+    text = posts[0][1]["text"]
+    assert text.startswith("<@U1> Added a token check to login.")
+    assert "auth.py · uncommitted changes:\n```diff\n+    check_token()" in text and text.endswith("```")
+
+
+def test_discord_code_is_truncated_to_fit_2000(monkeypatch, posts):
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://hooks.example/d")
+    dp.dispatch(coded("discord", code="x" * 10_000), {"sarah": {"discord": 42}})
+    content = posts[0][1]["content"]
+    assert len(content) <= dp.DISCORD_LIMIT and "… (truncated)" in content and content.endswith("```")
+
+
+def test_compose_without_code_or_room():
+    assert dp.compose(draft(), 100) == "please review"
+    assert dp.compose(coded(), 40) == "Added a token check to login."    # too small for code: text only
+    plain = dp.compose(coded(), 5000, fence=False)
+    assert "```" not in plain and "check_token" in plain

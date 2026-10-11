@@ -9,9 +9,9 @@ The app is built by main.build(), so hotkeys, tray, focus gate, watcher and pipe
 The sandbox only swaps the outside world:
   - Slack/Discord webhooks -> a local inbox shown in the panel (nothing reaches real channels)
   - email -> not configured (SMTP_HOST blank), unless --live-webhooks
-  - VS Code snapshot -> a temp file the panel writes (buggy fixture / no errors / no file)
+  - VS Code snapshot -> a temp file pointing at a throwaway git repo (uncommitted fix / clean / no file)
   - memory db + contacts -> a temp folder, deleted on exit; your real db/ cache is untouched
-Webcam events can be simulated from the panel; --camera still turns on the real webcam.
+Webcam events can be simulated from the panel; the real webcam feeds the orb unless --no-camera.
 """
 import argparse
 import datetime as dt
@@ -39,60 +39,45 @@ CONTACTS = {
 # (area, scenario, how, expected). Voice steps: in --demo / --no-voice, type the same words instead.
 SCENARIOS = [
     ("Launch", "Startup", "Start the sandbox with VS Code or a terminal in front.",
-     "Pette appears bottom-right with a greeting that names the mode (DEMO or hotkeys)."),
-    ("Voice", "Call starts", "Ctrl+Shift+Space (ElevenLabs mode).",
-     "“Calling Flow-chan…”, then her greeting is spoken aloud and shown in the bubble."),
-    ("Voice", "Agent proposes, never sends", "Tell Flow-chan “Slack Sarah saying the build is green”.",
-     "She calls propose_message: a “Slack to Sarah” Send/Cancel bubble. Inbox stays empty until you click Send."),
-    ("Voice", "Agent hears the outcome", "Click Send (or Cancel), then ask her “did it go out?”.",
-     "She answers correctly (sent / cancelled); she never claims a send you didn't approve."),
-    ("Voice", "Hang up", "Press Ctrl+Shift+Space again (or pause, or stay silent 60 s).",
-     "“Call ended.”; the mic is released; proactive offers can appear again."),
-    ("Voice", "No ElevenLabs", "Run with FLOWSTATE_VOICE=whisper, or disconnect the network and call.",
-     "Whisper mode records + transcribes; a failed call falls back to a typed command box."),
-    ("Message", "Slack draft", "Ctrl+Shift+Space, say “Slack Sarah saying the build is green” (Whisper/typed mode).",
-     "Bubble titled “Slack to Sarah” with a drafted message and Send / Cancel."),
-    ("Message", "Send", "Click Send on the Slack draft.",
-     "Inbox shows SLACK “<@U0SARAH> …”; bubble says “Sent to Sarah on Slack.”"),
-    ("Message", "Cancel", "Draft another message, click Cancel.", "Nothing new in the inbox."),
-    ("Message", "Discord + mentions", "“Discord Alex saying standup moved to 3”, Send.",
-     "Inbox shows DISCORD with allowed_mentions.users = [Alex's id] only."),
-    ("Message", "Email not configured", "“Email Sarah asking for the report”, Send.",
-     "Title ends “(not configured)”; Send shows “SMTP_HOST is not set.” Nothing sent."),
-    ("Message", "Webhook failure", "Tick “Make webhooks fail”, draft + Send a Slack message.",
-     "Bubble: “Webhook returned HTTP 500”. No retry; inbox shows the rejected post."),
-    ("Message", "Question", "Ask “what does this file do?”.",
-     "Plain answer in the bubble, no Send button. (Demo mode: says it can only draft messages.)"),
-    ("Message", "Typed fallback", "Click Pette (or ask with the mic muted/denied).",
-     "A text box opens; typing a command works the same as speaking."),
-    ("Investigate", "File handoff", "Panel: “Buggy file + error”. Press Ctrl+Alt+Space.",
-     "Pette does NOT hide/flash (no screenshot). Bubble names dashboard.py and offers “Ask <agent>”."),
-    ("Investigate", "Agent result", "Click “Ask <agent>”.",
-     "Result panel: root cause + diff for dashboard.py line 12. Fixture files unchanged (panel shows hash check)."),
-    ("Investigate", "Copy task", "Tray → Coding agent: Copy task, investigate again, approve.",
-     "Clipboard holds a task containing the whole line-numbered dashboard.py."),
-    ("Investigate", "No file", "Panel: “No file”, then Ctrl+Alt+Space.",
-     "“No active file from VS Code…”; low-confidence proposal, nothing crashes."),
-    ("Investigate", "Voice route", "With the buggy file, ask (or tell Flow-chan) “why is this failing, ask Claude”.",
-     "Goes to the investigate proposal (not a message draft); Flow-chan calls investigate_code."),
-    ("Proactive", "Offer", "Tick “Fast proactive”, panel: “Buggy file + error”, wait ~5 s.",
-     "“Looks like you're stuck” offer with Investigate. Investigate → analysis proposal."),
-    ("Proactive", "No nag", "Dismiss the offer; keep the same error.",
-     "No repeat offer for that error (cooldown). “Reset offers” allows it again."),
-    ("Proactive", "Defer while away", "Reset offers, Face away, set the buggy file, wait, then Face back.",
-     "No offer while away; it appears shortly after Face back."),
-    ("Webcam", "Away / blink", "Face away, then Face back; Eyes closed, Eyes open.",
-     "Pette dozes while away and blinks on eyes closed; returns to idle."),
-    ("Webcam", "Nudge", "Draft a message, Face away, Face back.", "Pending draft re-titled “Still …?”."),
-    ("Webcam", "Pinch rules", "Pinch when idle; pinch on a message draft; pinch on an agent proposal.",
-     "Idle → ask opens. Draft → discarded and re-dictate. Agent proposal → untouched. Never sends."),
-    ("Control", "Pause", "Tray → Pause, press both hotkeys, Pinch; then unpause.",
-     "Paused: bubble cleared, nothing reacts. Unpaused: works again."),
+     "Pette, the camera orb above her (you + a grey ring) and the world-model window beside her."),
+    ("Workflow", "Click to talk", "Panel: “Buggy file (uncommitted fix)”. Click Pette, say “Slack Sarah what I changed in this file”.",
+     "Orb ring turns violet “Listening”; your words appear in the bubble as “You said …”. Flow-chan is silent."),
+    ("Workflow", "Groq draft", "Wait a second after speaking.",
+     "Orb “Thinking”, then a “Slack to Sarah” card with a summary of the change and “＋ dashboard.py · uncommitted changes”."),
+    ("Workflow", "Auto-dispatch", "Do nothing during the countdown.",
+     "Gradient border + “Sending in Ns”; then inbox shows SLACK with the summary and a ```diff``` block; orb “Sent ✓”."),
+    ("Workflow", "Send now", "Repeat, click “Send now” during the countdown.", "Sent immediately; one post only."),
+    ("Workflow", "Cancel", "Repeat, click “Cancel · Ns”.", "Nothing in the inbox; orb “Not sent”; bubble says nothing was sent."),
+    ("Workflow", "Click again stops", "Click Pette, then click her again before speaking.", "Listening stops; back to idle."),
+    ("Workflow", "Discord + code limit", "“Discord Alex what changed”.",
+     "DISCORD post ≤ 2000 chars, allowed_mentions only Alex, code block truncated with “… (truncated)” if long."),
+    ("Workflow", "No changes", "Panel: “Committed file (no changes)”, then message Sarah about it.",
+     "Message summarises the file; the file itself is attached as code (no diff)."),
+    ("Workflow", "Email not configured", "“Email Sarah the summary”.",
+     "“Email isn't configured, so nothing was sent.” Orb “Not sent”."),
+    ("Workflow", "Webhook failure", "Tick “Make webhooks fail”, send a Slack message.",
+     "Bubble “Webhook returned HTTP 500”, orb red “Not sent”. No retry."),
+    ("Workflow", "Question", "Ask “what does this file do?”.", "Plain answer in the bubble, nothing sent."),
+    ("Workflow", "Typed fallback", "Run with --no-voice (or deny the mic), click Pette.", "A text box opens; typing works the same."),
+    ("Orb", "You + hands", "Real camera on: sit in front of it, raise an open hand, then pinch.",
+     "Mirrored you in the circle, a hand skeleton, and a chip reading “open hand” / “pinch”."),
+    ("Orb", "Status ring", "Watch the ring through one full send.",
+     "violet Listening → blue Thinking → amber Sending in Ns → green Sent ✓ (or grey/red Not sent)."),
+    ("Webcam", "Pinch rules", "Pinch when idle; pinch during a countdown.",
+     "Idle → starts listening. Countdown → cancelled. A gesture never sends."),
+    ("Webcam", "Away / blink / nudge", "Start a send, Face away, Face back; Eyes closed, Eyes open.",
+     "Pette dozes while away; back → “Still sending?”; blinks on eyes closed."),
+    ("World model", "Live status", "Watch the window during a send.",
+     "Status pill mirrors the orb (moving border while busy); camera/hand/presence tiles update."),
+    ("World model", "Learns platform", "Send 2 Slack messages to Sarah, then “message Sarah saying hi” (no platform).",
+     "Draft is “Slack (usual) to Sarah”; window shows the rule “message Sarah → Slack” with the counts."),
+    ("World model", "Adaptive countdown", "Cancel 3 of your next 6 messages.",
+     "Window: countdown rule changes to 6s “because you cancelled 3 of 6”; the next send waits 6s."),
+    ("World model", "Clear", "Tray → Clear Pette memory.", "Window resets to defaults; no “(usual)”."),
+    ("Control", "Pause", "Tray → Pause, click Pette, press the hotkey, Pinch; then unpause.",
+     "Paused: nothing reacts, camera off, countdown stopped. Unpaused: works again."),
     ("Control", "Focus gate", "Switch to a browser, then back to VS Code.",
-     "Pette hides outside VS Code/terminals and reappears; hotkeys ignored while hidden."),
-    ("Memory", "Learned platform", "Send 2 Slack messages to Sarah, then “message Sarah saying hi” (no platform).",
-     "Draft is “Slack (usual) to Sarah”. Tray → What Pette learned mentions it."),
-    ("Memory", "Clear", "Tray → Clear Pette memory, repeat the last step.", "No “(usual)”; back to defaults."),
+     "Pette hides outside VS Code/terminals and reappears; clicks/hotkey ignored while hidden."),
 ]
 
 
@@ -145,6 +130,44 @@ def setup_env(args, tmp: Path, inbox: Inbox | None):
         os.environ["SMTP_HOST"] = ""  # blank wins over .env (load_dotenv never overrides)
 
 
+FIXED = '''"""Demo fixture: a deliberate bug for the FlowState investigate -> coding agent flow."""
+
+
+def load_user(user_id: int) -> dict | None:
+    users = {1: {"name": "Sarah", "stats": {"commits": 42}}}
+    return users.get(user_id)
+
+
+def render_dashboard(user_id: int) -> str:
+    user = load_user(user_id)
+    if user is None:
+        return "Unknown user"
+    commits = user.get("stats", {}).get("commits", 0)
+    return f"{user['name']} has {commits} commits"
+
+
+if __name__ == "__main__":
+    print(render_dashboard(1))
+    print(render_dashboard(2))
+'''
+
+
+def git(repo: Path, *args):
+    subprocess.run(["git", "-c", "user.email=sandbox@pette", "-c", "user.name=Pette sandbox", *args], cwd=repo,
+                   check=True, capture_output=True)
+
+
+def make_fixture_repo(tmp: Path) -> Path:
+    """A throwaway git repo with the buggy fixture committed; the panel layers the fix on top as a diff."""
+    repo = tmp / "buggy_app"
+    repo.mkdir()
+    shutil.copy2(FIXTURE, repo / FIXTURE.name)
+    git(repo, "init", "-q")
+    git(repo, "add", FIXTURE.name)
+    git(repo, "commit", "-q", "-m", "buggy dashboard")
+    return repo
+
+
 def fixture_hashes() -> dict[str, str]:
     import hashlib
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()[:12] for p in FIXTURE.parent.glob("*.py")}
@@ -172,7 +195,6 @@ def main() -> int:
     import main as app_main
     from pet import context, llm, voice
     from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
-    from pet.watcher import InterventionPolicy
 
     main_args = app_main.parse_args(rest)
     ctx = app_main.build(main_args)
@@ -187,7 +209,7 @@ def main() -> int:
 
     brain = "DEMO (offline keyword drafter)" if main_args.demo else f"Groq {llm.chat_model()}"
     voice_on = not (main_args.demo or main_args.no_voice)
-    voice_mode = ("ElevenLabs Flow-chan" if pipeline._make_call else f"Whisper ({llm.stt_model()})") if voice_on else "typed"
+    voice_mode = (f"ElevenLabs {ctx.settings.mode}" if ctx.settings else f"Whisper ({llm.stt_model()})") if voice_on else "typed"
     status = QLabel()
     status.setWordWrap(True)
     status.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -196,14 +218,16 @@ def main() -> int:
 
     def refresh_status():
         af = context.read_active_file()
-        file_state = f"{Path(af.path).name} ({len(af.errors)} error(s))" if af else "no file"
+        file_state = (f"{Path(af.path).name} ({'uncommitted changes' if context.git_changes(af) else 'no changes'})"
+                      if af else "no file")
         status.setText(
             f"<b>Brain:</b> {brain} &nbsp; <b>Voice:</b> {voice_mode} &nbsp; "
-            f"<b>Agent:</b> {pipeline.agent.label} &nbsp; <b>Hotkeys:</b> {voice.HOTKEY} / {voice.INVESTIGATE_HOTKEY}<br>"
+            f"<b>State:</b> {pipeline.state} &nbsp; <b>Send countdown:</b> {pipeline.delay_s():g}s &nbsp; "
+            f"<b>Hotkey:</b> {voice.HOTKEY}<br>"
             f"<b>Webhooks:</b> {hooks}"
             f" &nbsp; <b>IDE:</b> {'real VS Code extension' if args.real_ide else 'fake snapshot'} → {file_state}"
             f" &nbsp; <b>Busy:</b> {pipeline.busy} &nbsp; <b>Paused:</b> {overlay.paused}"
-            f" &nbsp; <b>Fixture unchanged:</b> {fixture_hashes() == hashes_before}<br>"
+            f" &nbsp; <b>Repo fixture untouched:</b> {fixture_hashes() == hashes_before}<br>"
             f"<b>Temp state:</b> {tmp}")
 
     root.addWidget(status)
@@ -226,31 +250,35 @@ def main() -> int:
         grid.addWidget(box, row, col)
         return box
 
-    # fake VS Code snapshot
+    # fake VS Code snapshot, pointing at a throwaway git repo so "what changed" is a real diff
     snap = Path(os.environ.get("FLOWSTATE_ACTIVE_FILE", ""))
+    repo = make_fixture_repo(tmp)
+    target = repo / FIXTURE.name
 
-    def write_snapshot(errors: bool | None):
-        if errors is None:
+    def write_snapshot(mode: str | None):
+        """mode: 'fix' = uncommitted fix (diff), 'clean' = committed file, None = no file."""
+        if mode is None:
             snap.unlink(missing_ok=True)
         else:
-            diags = [{"line": 12, "severity": "error", "source": "pytest", "code": "",
-                      "message": "TypeError: 'NoneType' object is not subscriptable"}] if errors else []
+            git(repo, "checkout", "-q", "--", FIXTURE.name)
+            if mode == "fix":
+                target.write_text(FIXED, encoding="utf-8")
             snap.write_text(json.dumps({
-                "path": str(FIXTURE), "workspace": str(FIXTURE.parent), "language": "python",
-                "content": FIXTURE.read_text(encoding="utf-8"), "selection": "", "line": 12,
-                "diagnostics": diags, "updatedAt": dt.datetime.now().isoformat()}), encoding="utf-8")
+                "path": str(target), "workspace": str(repo), "language": "python",
+                "content": target.read_text(encoding="utf-8"), "selection": "", "line": 12,
+                "diagnostics": [], "updatedAt": dt.datetime.now().isoformat()}), encoding="utf-8")
         refresh_status()
 
     ide = group("Fake VS Code (active file)", 0, 0, [
-        ("Buggy file + error", lambda: write_snapshot(True)),
-        ("Same file, no errors", lambda: write_snapshot(False)),
+        ("Buggy file (uncommitted fix)", lambda: write_snapshot("fix")),
+        ("Committed file (no changes)", lambda: write_snapshot("clean")),
         ("No file", lambda: write_snapshot(None)),
     ])
     if args.real_ide:
         ide.setEnabled(False)
         ide.setTitle("Fake VS Code (off: --real-ide)")
     else:
-        write_snapshot(None)
+        write_snapshot("fix")
 
     group("Simulated webcam events", 1, 0, [
         (n, (lambda ev=ev: watcher.on_vision_event(ev)))
@@ -258,21 +286,11 @@ def main() -> int:
                       ("Eyes open", EYES_OPEN), ("Pinch", PINCH))
     ])
 
-    fast = QCheckBox("Fast proactive (3 s)")
-
-    def reset_offers():
-        watcher.policy = InterventionPolicy()
-        if fast.isChecked():
-            watcher.policy.DIAG_PERSIST_S = 3
-        watcher._timer.setInterval(1000 if fast.isChecked() else 5000)
-
-    fast.toggled.connect(lambda _: reset_offers())
     group("Triggers", 2, 0, [
-        ("Ask (hotkey)", pipeline.hotkey_pressed.emit),
-        ("Investigate (hotkey)", pipeline.investigate_hotkey.emit),
+        ("Click Pette (talk)", overlay.pet.clicked.emit),
         ("Pause / resume", lambda: overlay.set_paused(not overlay.paused)),
-        (fast, None),
-        ("Reset offers", reset_offers),
+        ("World model window", ctx.worldwin.toggle),
+        ("Camera on/off", lambda: watcher.set_camera(watcher.camera is None)),
     ])
 
     fail = QCheckBox("Make webhooks fail (HTTP 500)")
@@ -344,10 +362,10 @@ def main() -> int:
                                 text=True).stdout.strip()
         lines = ["# Manual test report", "",
                  f"- Date: {dt.datetime.now():%Y-%m-%d %H:%M}", f"- Commit: `{commit}`",
-                 f"- Brain: {brain}; voice: {voice_mode}; agent: {pipeline.agent.label}",
+                 f"- Brain: {brain}; voice: {voice_mode}; send countdown: {pipeline.delay_s():g}s",
                  f"- Webhooks: {'LIVE' if args.live_webhooks else 'sandbox inbox'}; "
                  f"IDE: {'real extension' if args.real_ide else 'fake snapshot'}",
-                 f"- Fixture files unchanged by agents: {fixture_hashes() == hashes_before}",
+                 f"- Repo fixture untouched (sandbox works on a copy): {fixture_hashes() == hashes_before}",
                  f"- Result: {summary.text()}", "",
                  "| Area | Scenario | Result | Notes |", "|---|---|---|---|"]
         for r, (area, name, _, _) in enumerate(SCENARIOS):

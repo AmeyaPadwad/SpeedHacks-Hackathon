@@ -66,3 +66,44 @@ def test_pinch_ratio_and_blink_helpers():
     assert pinch_ratio(lm) is None  # degenerate hand scale
     shapes = [P(category_name="eyeBlinkLeft", score=0.7), P(category_name="eyeBlinkRight", score=0.2)]
     assert blink_scores(shapes) == (0.7, 0.2)
+
+
+class LM:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+
+def hand(extended=(True, True, True, True), pinch=False):
+    """21 landmarks: wrist at the bottom, fingers pointing up; folded fingers curl back toward the wrist."""
+    pts = [LM(0.5, 0.9)] + [LM(0.42, 0.8), LM(0.38, 0.7), LM(0.36, 0.62), LM(0.35, 0.55)]   # wrist + thumb
+    for i, up in enumerate(extended):
+        x = 0.45 + i * 0.05
+        pts += [LM(x, 0.65), LM(x, 0.55), LM(x, 0.47), LM(x, 0.40)] if up else \
+               [LM(x, 0.65), LM(x, 0.58), LM(x, 0.66), LM(x, 0.74)]
+    if pinch:
+        pts[4] = LM(pts[8].x + 0.01, pts[8].y)
+    return pts
+
+
+def test_gesture_names():
+    from pet.vision import gesture_name
+    assert gesture_name(hand()) == "open hand"
+    assert gesture_name(hand((False,) * 4)) == "fist"
+    assert gesture_name(hand((True, False, False, False))) == "point"
+    assert gesture_name(hand((True, True, False, False))) == "peace"
+    assert gesture_name(hand(pinch=True)) == "pinch"
+    assert gesture_name(None) == ""
+
+
+def test_preview_is_small_mirrored_and_owns_its_pixels(qapp):
+    import numpy as np
+    from pet.vision import preview
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    rgb[:, :320] = (255, 0, 0)                           # left half red in the camera image
+    out = preview(rgb, hand())
+    img = out["image"]
+    del rgb
+    assert (img.width(), img.height()) == (168, 168)
+    assert img.pixelColor(150, 84).red() == 255 and img.pixelColor(10, 84).red() == 0   # mirrored
+    assert len(out["hand"]) == 21 and all(0 <= x <= 1.2 and 0 <= y <= 1 for x, y in out["hand"])
+    assert out["gesture"] == "open hand"

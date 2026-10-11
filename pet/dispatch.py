@@ -10,6 +10,9 @@ import requests
 
 from .brain import Draft
 
+SLACK_LIMIT = 3500     # keep well under Slack's 40k so the post stays readable
+DISCORD_LIMIT = 2000   # Discord's hard cap on message content
+EMAIL_CODE_LIMIT = 20_000
 CONTACTS_FILE = Path(os.environ.get("FLOWSTATE_CONTACTS") or Path.home() / ".flowstate_contacts.json")
 TIMEOUT_S = 10
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -36,6 +39,20 @@ def configured(platform: str) -> bool:
     }.get(platform, False)
 
 
+def compose(d: Draft, limit: int, fence: bool = True) -> str:
+    """Message text plus the attached code, truncated so the whole post fits the platform limit."""
+    if not d.code:
+        return d.message[:limit]
+    head = f"{d.message}\n\n{d.code_label or 'Code'}:\n"
+    open_, close = (f"```{d.code_lang}\n", "\n```") if fence else ("", "")
+    marker = "\n… (truncated)"
+    room = limit - len(head) - len(open_) - len(close)
+    if room <= len(marker) + 20:   # no useful room for code: send the text alone
+        return d.message[:limit]
+    code = d.code if len(d.code) <= room else d.code[: room - len(marker)] + marker
+    return f"{head}{open_}{code}{close}"
+
+
 def _post(url: str, payload: dict):
     try:
         r = requests.post(url, json=payload, timeout=TIMEOUT_S)
@@ -49,8 +66,8 @@ def send_slack(d: Draft, contact: dict):
     url = os.environ.get("SLACK_WEBHOOK_URL")
     if not url:
         raise DispatchError("SLACK_WEBHOOK_URL is not set.")
-    who = f"<@{contact['slack']}>" if contact.get("slack") else d.recipient
-    _post(url, {"text": f"{who} {d.message}"})
+    who = f"<@{contact['slack']}> " if contact.get("slack") else f"{d.recipient} "
+    _post(url, {"text": who + compose(d, SLACK_LIMIT - len(who))})
 
 
 def send_discord(d: Draft, contact: dict):
@@ -58,9 +75,10 @@ def send_discord(d: Draft, contact: dict):
     if not url:
         raise DispatchError("DISCORD_WEBHOOK_URL is not set.")
     uid = contact.get("discord")
-    who = f"<@{uid}>" if uid else d.recipient
+    who = f"<@{uid}> " if uid else f"{d.recipient} "
     # Only ping the resolved recipient; never @everyone/@here or roles from model text.
-    _post(url, {"content": f"{who} {d.message}", "allowed_mentions": {"users": [str(uid)] if uid else []}})
+    _post(url, {"content": who + compose(d, DISCORD_LIMIT - len(who)),
+                "allowed_mentions": {"users": [str(uid)] if uid else []}})
 
 
 def send_email(d: Draft, contact: dict):
@@ -74,7 +92,7 @@ def send_email(d: Draft, contact: dict):
     msg["From"] = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER", "")
     msg["To"] = to
     msg["Subject"] = d.subject or "Quick note"
-    msg.set_content(d.message)
+    msg.set_content(compose(d, len(d.message) + EMAIL_CODE_LIMIT, fence=False))
     try:
         with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT") or 587), timeout=TIMEOUT_S) as s:
             s.starttls()
