@@ -3,6 +3,7 @@ import io
 import os
 
 HOTKEY = os.environ.get("FLOWSTATE_HOTKEY") or "ctrl+shift+space"
+INVESTIGATE_HOTKEY = os.environ.get("FLOWSTATE_INVESTIGATE_HOTKEY") or "ctrl+alt+space"
 LISTEN_TIMEOUT_S = 6      # wait this long for speech to start
 PHRASE_LIMIT_S = 20       # hard cap on one command
 TRANSCRIBE_TIMEOUT_S = 20
@@ -12,11 +13,11 @@ class VoiceError(Exception):
     """Mic unavailable, nothing heard, or transcription failed; caller offers typed input instead."""
 
 
-def register_hotkey(callback) -> bool:
+def register_hotkey(callback, hotkey: str = HOTKEY) -> bool:
     """Call `callback` (on the keyboard library's thread) when the hotkey is pressed. False if unavailable."""
     try:
         import keyboard
-        keyboard.add_hotkey(HOTKEY, callback, suppress=False)
+        keyboard.add_hotkey(hotkey, callback, suppress=False)
         return True
     except Exception:  # missing package, or OS refused the hook
         return False

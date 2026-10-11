@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon,
-    QVBoxLayout, QWidget,
+    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
+    QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 from .sprites import ANIMATIONS, SpriteSheet
@@ -35,6 +35,7 @@ class PetWidget(QWidget):
         super().__init__()
         self.sheet = sheet
         self.state = "idle"
+        self.camera_on = False
         self._tick = 0
         self._press = None
         self._moved = False
@@ -59,8 +60,12 @@ class PetWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         t = self._tick / FPS
-        sleeping = self.state == "sleeping"
+        sleeping = self.state in ("sleeping", "away")
         bob = 0 if sleeping else round(math.sin(t * 2.2) * 2)
+        if self.camera_on:  # visible indicator whenever the webcam is in use
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(MINT))
+            p.drawEllipse(8, 8, 9, 9)
         if sleeping:
             p.setOpacity(0.7)
         p.drawPixmap(QRect(4, 6 + bob, self.width() - 8, self.height() - 14), self.sheet.frames[frame])
@@ -212,6 +217,52 @@ class Bubble(QFrame):
             self.cancelled.emit(pid)
 
 
+class ResultPanel(QWidget):
+    """Read-only view of a coding agent's proposal. Copy is the only action; nothing is applied."""
+
+    def __init__(self):
+        super().__init__(None, Qt.Window | Qt.WindowStaysOnTopHint)
+        self.setWindowTitle("Pette · agent proposal")
+        self.resize(720, 560)
+        self.setStyleSheet(f"""
+            QWidget {{ background: {CREAM}; color: {INK}; font-family: 'Segoe UI'; }}
+            QLabel#head {{ font-size: 11pt; font-weight: 600; color: #3C7A62; }}
+            QLabel#note {{ font-size: 9pt; color: #6E6E6E; }}
+            QPlainTextEdit {{ background: white; border: 1px solid {INK}; border-radius: 8px;
+                             font-family: 'Cascadia Mono', Consolas, monospace; font-size: 10pt; padding: 6px; }}
+            QPushButton {{ font-size: 10pt; padding: 6px 14px; border-radius: 8px; border: 1px solid {INK};
+                          background: white; }}
+            QPushButton#primary {{ background: {INK}; color: {MINT}; font-weight: 600; }}
+        """)
+        self.head = QLabel(objectName="head")
+        self.note = QLabel("Proposal only. Nothing has been applied to your files.", objectName="note")
+        self.text = QPlainTextEdit(readOnly=True)
+        copy = QPushButton("Copy", objectName="primary")
+        close = QPushButton("Close")
+        copy.clicked.connect(self._copy)
+        close.clicked.connect(self.hide)
+        row = QHBoxLayout()
+        row.addWidget(self.note)
+        row.addStretch()
+        row.addWidget(close)
+        row.addWidget(copy)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.head)
+        lay.addWidget(self.text, 1)
+        lay.addLayout(row)
+
+    def show_result(self, title: str, text: str):
+        self.head.setText(title)
+        self.text.setPlainText(text)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _copy(self):
+        QApplication.clipboard().setText(self.text.toPlainText())
+        self.note.setText("Copied to clipboard.")
+
+
 class Overlay(QWidget):
     """Frameless always-on-top window: bubble above the pet, bottom edge anchored."""
     approved = Signal(str)
@@ -220,6 +271,8 @@ class Overlay(QWidget):
     pause_toggled = Signal(bool)
     text_submitted = Signal(str)
     input_cancelled = Signal()
+    investigate_requested = Signal()
+    pinch_on_proposal = Signal(str)   # proposal id; pipeline decides (re-dictate drafts, ignore the rest)
 
     def __init__(self, sheet: SpriteSheet | None = None, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -234,6 +287,9 @@ class Overlay(QWidget):
         lay.addWidget(self.bubble, 0, Qt.AlignHCenter)
         lay.addWidget(self.pet, 0, Qt.AlignHCenter)
         self.paused = False
+        self.context_allowed = True   # False while the foreground app isn't VS Code / a terminal (FocusGate)
+        self.away = self.eyes_closed = False
+        self._base_state = "idle"
         self.bubble.approved.connect(self._decided(self.approved))
         self.bubble.cancelled.connect(self._decided(self.cancelled))
         self.bubble.submitted.connect(self.text_submitted)
@@ -245,7 +301,82 @@ class Overlay(QWidget):
 
     # --- public API -------------------------------------------------------
     def set_state(self, state: str):
-        self.pet.set_state("sleeping" if self.paused else state)
+        self._base_state = state
+        if self.paused:
+            state = "sleeping"
+        elif state == "idle" and self.away:
+            state = "away"
+        elif state == "idle" and self.eyes_closed:
+            state = "blink"
+        self.pet.set_state(state)
+
+    def set_context_allowed(self, allowed: bool):
+        """Hide Pette outside VS Code / terminals; pending proposals stay pending until she reappears."""
+        self.context_allowed = allowed
+        if allowed:
+            self.show()
+        else:
+            self.hide()
+
+    def reveal(self):
+        """Show again after a temporary hide (e.g. screenshot), unless the focus gate says otherwise."""
+        if self.context_allowed:
+            self.show()
+
+    def set_presence(self, away: bool, eyes_closed: bool):
+        """Webcam reactions; only change Pette's look while she's otherwise idle."""
+        self.away, self.eyes_closed = away, eyes_closed
+        self.set_state(self._base_state)
+
+    def set_camera_indicator(self, on: bool):
+        self.pet.camera_on = on
+        self.pet.setToolTip("Camera on: processed locally, never uploaded" if on else "")
+        self.pet.update()
+
+    def pinch(self):
+        """Gesture control for the message workflow. A gesture never approves (sends) anything.
+
+        - idle: push-to-talk (same as the hotkey)
+        - plain message showing: dismiss it
+        - proposal pending: ask the pipeline to re-dictate (it only does so for message drafts)
+        - typing a command: ignored
+        """
+        if self.paused or self.bubble.asking or not self.context_allowed:
+            return
+        if self.bubble.proposal:
+            self.pinch_on_proposal.emit(self.bubble.proposal.id)
+        elif self.bubble.isVisible():
+            self.dismiss()
+        else:
+            self.ask_requested.emit()
+
+    def nudge(self):
+        """Bring a pending proposal back to attention (e.g. when the user returns to the camera)."""
+        p = self.bubble.proposal
+        if self.paused or p is None or self.bubble.isHidden():   # isHidden: works while Pette herself is hidden
+            return
+        if not self.bubble.title.text().startswith("Still "):
+            self.bubble.title.setText(f"Still {p.action_label.lower()}? · {p.title}")
+        self.set_state("speaking")
+        self.raise_()
+
+    def add_menu_action(self, text: str, slot=None, *, checkable=False, checked=False) -> QAction | None:
+        """Insert a tray action above Bring to front / Quit. No-op without a tray (tests)."""
+        if not self._tray:
+            return None
+        act = QAction(text, self._menu, checkable=checkable)
+        if checkable:
+            act.setChecked(checked)
+            if slot:
+                act.toggled.connect(slot)
+        elif slot:
+            act.triggered.connect(slot)
+        self._menu.insertAction(self._front_action, act)
+        return act
+
+    def notify(self, title: str, text: str):
+        if self._tray:
+            self._tray.showMessage(title, text, QSystemTrayIcon.Information, 4000)
 
     def say(self, text: str, title: str = "", seconds: float | None = 6):
         if self.paused:
@@ -283,7 +414,7 @@ class Overlay(QWidget):
         self.paused = paused
         if paused:
             self.dismiss()  # also drops any pending proposal so it can't be approved later
-        self.pet.set_state("sleeping" if paused else "idle")
+        self.set_state("idle")
         if self._pause_action and self._pause_action.isChecked() != paused:
             self._pause_action.setChecked(paused)
         self.pause_toggled.emit(paused)
@@ -341,10 +472,13 @@ class Overlay(QWidget):
         tray.setToolTip("Pette")
         menu = QMenu()
         menu.addAction(QAction("Ask Pette", menu, triggered=self.ask_requested.emit))
+        menu.addAction(QAction("Investigate screen", menu, triggered=self.investigate_requested.emit))
         self._pause_action = QAction("Pause all", menu, checkable=True)
         self._pause_action.toggled.connect(lambda c: c != self.paused and self.set_paused(c))
         menu.addAction(self._pause_action)
-        menu.addAction(QAction("Bring to front", menu, triggered=self._bring_front))
+        menu.addSeparator()
+        self._front_action = QAction("Bring to front", menu, triggered=self._bring_front)
+        menu.addAction(self._front_action)
         menu.addAction(QAction("Quit", menu, triggered=QApplication.quit))
         tray.setContextMenu(menu)
         self._menu = menu

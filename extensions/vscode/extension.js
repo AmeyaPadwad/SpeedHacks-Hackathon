@@ -22,12 +22,28 @@ function write() {
   if (!ed || ed.document.uri.scheme !== "file") return;
   const max = config().get("maxChars");
   const doc = ed.document;
+  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  const severities = ["error", "warning", "info", "hint"];
+  // Errors and warnings in the active file, capped so a broken file can't flood the agent prompt.
+  const diagnostics = vscode.languages
+    .getDiagnostics(doc.uri)
+    .filter((d) => d.severity <= vscode.DiagnosticSeverity.Warning)
+    .slice(0, 20)
+    .map((d) => ({
+      line: d.range.start.line + 1,
+      severity: severities[d.severity],
+      message: d.message.slice(0, 500),
+      source: d.source || "",
+      code: typeof d.code === "object" ? String(d.code.value) : String(d.code ?? ""),
+    }));
   const data = {
     path: doc.uri.fsPath,
+    workspace: folder ? folder.uri.fsPath : "",
     language: doc.languageId,
     content: doc.getText().slice(0, max),
     selection: doc.getText(ed.selection).slice(0, max),
     line: ed.selection.active.line + 1,
+    diagnostics,
     updatedAt: new Date().toISOString(),
   };
   // Write to a temp file then rename, so the agent never reads a half-written snapshot.
@@ -47,6 +63,7 @@ function activate(context) {
     vscode.window.onDidChangeActiveTextEditor(schedule),
     vscode.window.onDidChangeTextEditorSelection(schedule),
     vscode.workspace.onDidSaveTextDocument(schedule),
+    vscode.languages.onDidChangeDiagnostics(schedule),
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration("flowstate") && schedule()),
     vscode.commands.registerCommand("flowstate.toggle", async () => {
       const on = !config().get("enabled");

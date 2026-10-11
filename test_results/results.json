@@ -1,0 +1,72 @@
+[
+  {
+    "check": "Environment",
+    "status": "INFO",
+    "detail": "Windows 11 (10.0.26200), Python 3.13.9, PySide6 6.8.3, OpenCV 5.0.0, MediaPipe 1.1.0, openai 2.46.0"
+  },
+  {
+    "check": "Unit + integration tests",
+    "status": "PASS",
+    "detail": "114/114 passed, 0 failed, 0 errors, 0 skipped in 18.6s"
+  },
+  {
+    "check": "MediaPipe models",
+    "status": "PASS",
+    "detail": "face + hand landmarker present"
+  },
+  {
+    "check": "Webcam: face / eyes / hands (live)",
+    "status": "PASS",
+    "detail": "107 frames in 4s, face in 107/107, hand in 0/107, open-eye blink score avg 0.14 (closed threshold 0.6); camera released"
+  },
+  {
+    "check": "Foreground app detection",
+    "status": "PASS",
+    "detail": "foreground = Code.exe -> show Pette"
+  },
+  {
+    "check": "Screen CV on the real screen",
+    "status": "PASS",
+    "detail": "1920x1200, 15 error-coloured region(s), 83 ms (image discarded)"
+  },
+  {
+    "check": "VS Code bridge snapshot",
+    "status": "SKIP",
+    "detail": "no snapshot at ~/.flowstate_current.json (extension not installed or no file open)"
+  },
+  {
+    "check": "db cache + world model",
+    "status": "PASS",
+    "detail": "write -> learn -> read round trip in a temp db"
+  },
+  {
+    "check": "OpenAI (GPT-4o / Whisper)",
+    "status": "FAIL",
+    "detail": "OpenAI account has no credits. Add billing at platform.openai.com. (app falls back to labelled local analysis)"
+  },
+  {
+    "check": "Claude Code agent (live, read-only)",
+    "status": "PASS",
+    "detail": "answered in 25s, 2600 chars, root cause + diff: yes, fixture files unchanged: yes"
+  },
+  {
+    "check": "Hermes agent",
+    "status": "INFO",
+    "detail": "installed (adapter unit-tested; live run not part of checks)"
+  },
+  {
+    "check": "Slack webhook",
+    "status": "SKIP",
+    "detail": "configured; live post skipped (run with --webhooks)"
+  },
+  {
+    "check": "Discord webhook",
+    "status": "SKIP",
+    "detail": "configured; live post skipped (run with --webhooks)"
+  },
+  {
+    "check": "UI states (screenshots)",
+    "status": "PASS",
+    "detail": "11/11 states rendered on the real display -> test_results/ui_states.png"
+  }
+]

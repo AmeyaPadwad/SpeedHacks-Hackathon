@@ -14,13 +14,15 @@ ANIMATIONS = {
     "listening": [LOOK, IDLE_A],
     "thinking": [TYPING, LOOK, TYPING, IDLE_B],
     "speaking": [HAPPY, IDLE_A, HAPPY, WAVE],
-    "sleeping": [HAPPY],
+    "sleeping": [HAPPY],   # paused
+    "away": [HAPPY],       # webcam: face not seen for a while
+    "blink": [HAPPY],      # webcam: user's eyes closed -> Pette closes hers
 }
 
 
-def asset_path(name: str) -> Path:
+def asset_path(name: str, folder: str = "assets") -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    return base / "assets" / name
+    return base / folder / name
 
 
 class SpriteSheet:
