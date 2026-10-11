@@ -15,7 +15,7 @@ Both specs are references only. This project is Python and PySide6, not the Elec
 
 ## Git workflow
 
-Commit and push often, after every meaningful step, without asking first. Small or work-in-progress commits are fine. Work on the current branch (`sujash-working`), never directly on `main`.
+Commit and push often, after every meaningful step, without asking first. Small or work-in-progress commits are fine. Work on the `dev` branch, never directly on `main`.
 
 ## Commands
 
