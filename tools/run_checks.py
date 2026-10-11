@@ -208,6 +208,47 @@ def agent_check():
            f"fixture files unchanged: {'yes' if unchanged else 'NO'}")
 
 
+@check("ElevenLabs voice agent")
+def eleven_check():
+    """Text-only conversation: does the agent answer, and does it call propose_message for a draft?"""
+    from websockets.sync.client import connect
+
+    from pet import eleven
+    name = "ElevenLabs voice agent"
+    settings = eleven.Settings.from_env()
+    if settings is None:
+        record(name, "SKIP", "ELEVENLABS_AGENT_ID not set (or FLOWSTATE_VOICE=whisper)")
+        return
+    tool, greeted = None, False
+    with connect(settings.url(), open_timeout=10) as ws:
+        ws.send(json.dumps({"type": "conversation_initiation_client_data",
+                            "conversation_config_override": {"conversation": {"text_only": True}}}))
+        deadline = time.time() + 25
+        while time.time() < deadline and tool is None:
+            try:
+                msg = json.loads(ws.recv(timeout=2))
+            except TimeoutError:
+                continue
+            kind = msg.get("type")
+            if kind == "ping":
+                ws.send(json.dumps({"type": "pong", "event_id": msg["ping_event"]["event_id"]}))
+            elif kind == "agent_response" and not greeted:
+                greeted = True
+                ws.send(json.dumps({"type": "user_message", "text": "Slack Sarah saying the build is green."}))
+            elif kind == "client_tool_call":
+                call = msg["client_tool_call"]
+                tool = call.get("tool_name")
+                ws.send(json.dumps({"type": "client_tool_result", "tool_call_id": call.get("tool_call_id"),
+                                    "result": "Check only; nothing shown.", "is_error": False}))
+    if tool == eleven.MESSAGE_TOOL:
+        record(name, "PASS", f"agent answered and called {tool} for a Slack draft (text-only check, nothing sent)")
+    elif greeted:
+        record(name, "FAIL", "agent answers but never called propose_message: add the client tools from "
+                             "tools/elevenlabs_agent_tools.json in the ElevenLabs dashboard")
+    else:
+        record(name, "FAIL", "agent didn't respond within 25s")
+
+
 @check("Hermes agent")
 def hermes_check():
     from pet.agents import HermesAgent
@@ -389,6 +430,7 @@ def main() -> int:
         record("Claude Code agent (live, read-only)", "SKIP", "--no-agent")
     else:
         agent_check()
+    eleven_check()
     hermes_check()
     webhook_check(args.webhooks)
     ui_check(app)

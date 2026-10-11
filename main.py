@@ -1,5 +1,6 @@
 """FlowState entry point: tray + floating Pette overlay + global hotkeys + CV watcher."""
 import argparse
+import functools
 import os
 import sys
 from pathlib import Path
@@ -14,7 +15,7 @@ from PySide6.QtGui import QActionGroup  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from db import Store, WorldModel  # noqa: E402
-from pet import agents, llm, voice  # noqa: E402
+from pet import agents, eleven, llm, voice  # noqa: E402
 from pet.analyst import LocalAnalyst  # noqa: E402
 from pet.brain import OfflineBrain  # noqa: E402
 from pet.focus import FocusGate  # noqa: E402
@@ -42,10 +43,12 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     results = ResultPanel()
     memory = Store()                    # db/pette_cache.sqlite3: facts only, local, 30-day retention
     world = WorldModel(memory)
+    call = None if (args.demo or args.no_voice) else eleven.Settings.from_env()
     pipeline = Pipeline(overlay, OfflineBrain() if args.demo else None,
                         analyst=LocalAnalyst() if args.demo else None,
                         show_result=results.show_result, use_voice=not (args.no_voice or args.demo),
-                        memory=memory, world=world)
+                        memory=memory, world=world,
+                        voice_call=functools.partial(eleven.Call, call) if call else None)
     watcher = Watcher(overlay, lambda: pipeline.busy, memory=memory, world=world)
     app.aboutToQuit.connect(memory.close)
     watcher.offer.connect(pipeline.offer_investigation)
@@ -108,11 +111,12 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     gate.start()   # hides Pette right away if VS Code / a terminal isn't in front
     if args.camera and camera_action:
         camera_action.setChecked(True)
-    keys = f"{voice.HOTKEY.title()} to ask, {voice.INVESTIGATE_HOTKEY.title()} to investigate the open file."
+    ask = "to talk to Flow-chan" if call else "to ask"
+    keys = f"{voice.HOTKEY.title()} {ask}, {voice.INVESTIGATE_HOTKEY.title()} to investigate the open file."
     if args.demo:
         overlay.say(f"Demo mode: no AI. {keys}", title=OfflineBrain.label, seconds=8)
     elif not llm.configured():
-        overlay.say(f"{llm.KEY_VAR} isn't set, so voice and drafting are off. Investigate still works locally.",
+        overlay.say(f"{llm.KEY_VAR} isn't set, so drafting and analysis are off. Investigate still works locally.",
                     title="Setup needed", seconds=10)
     elif hotkey_ok:
         overlay.say(f"Press {keys}", seconds=7)

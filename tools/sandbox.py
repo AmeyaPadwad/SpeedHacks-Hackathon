@@ -40,7 +40,17 @@ CONTACTS = {
 SCENARIOS = [
     ("Launch", "Startup", "Start the sandbox with VS Code or a terminal in front.",
      "Pette appears bottom-right with a greeting that names the mode (DEMO or hotkeys)."),
-    ("Message", "Slack draft", "Ctrl+Shift+Space, say “Slack Sarah saying the build is green”.",
+    ("Voice", "Call starts", "Ctrl+Shift+Space (ElevenLabs mode).",
+     "“Calling Flow-chan…”, then her greeting is spoken aloud and shown in the bubble."),
+    ("Voice", "Agent proposes, never sends", "Tell Flow-chan “Slack Sarah saying the build is green”.",
+     "She calls propose_message: a “Slack to Sarah” Send/Cancel bubble. Inbox stays empty until you click Send."),
+    ("Voice", "Agent hears the outcome", "Click Send (or Cancel), then ask her “did it go out?”.",
+     "She answers correctly (sent / cancelled); she never claims a send you didn't approve."),
+    ("Voice", "Hang up", "Press Ctrl+Shift+Space again (or pause, or stay silent 60 s).",
+     "“Call ended.”; the mic is released; proactive offers can appear again."),
+    ("Voice", "No ElevenLabs", "Run with FLOWSTATE_VOICE=whisper, or disconnect the network and call.",
+     "Whisper mode records + transcribes; a failed call falls back to a typed command box."),
+    ("Message", "Slack draft", "Ctrl+Shift+Space, say “Slack Sarah saying the build is green” (Whisper/typed mode).",
      "Bubble titled “Slack to Sarah” with a drafted message and Send / Cancel."),
     ("Message", "Send", "Click Send on the Slack draft.",
      "Inbox shows SLACK “<@U0SARAH> …”; bubble says “Sent to Sarah on Slack.”"),
@@ -63,8 +73,8 @@ SCENARIOS = [
      "Clipboard holds a task containing the whole line-numbered dashboard.py."),
     ("Investigate", "No file", "Panel: “No file”, then Ctrl+Alt+Space.",
      "“No active file from VS Code…”; low-confidence proposal, nothing crashes."),
-    ("Investigate", "Voice route", "With the buggy file, ask “why is this failing, ask Claude”.",
-     "Goes to the investigate proposal (not a message draft)."),
+    ("Investigate", "Voice route", "With the buggy file, ask (or tell Flow-chan) “why is this failing, ask Claude”.",
+     "Goes to the investigate proposal (not a message draft); Flow-chan calls investigate_code."),
     ("Proactive", "Offer", "Tick “Fast proactive”, panel: “Buggy file + error”, wait ~5 s.",
      "“Looks like you're stuck” offer with Investigate. Investigate → analysis proposal."),
     ("Proactive", "No nag", "Dismiss the offer; keep the same error.",
@@ -177,6 +187,7 @@ def main() -> int:
 
     brain = "DEMO (offline keyword drafter)" if main_args.demo else f"Groq {llm.chat_model()}"
     voice_on = not (main_args.demo or main_args.no_voice)
+    voice_mode = ("ElevenLabs Flow-chan" if pipeline._make_call else f"Whisper ({llm.stt_model()})") if voice_on else "typed"
     status = QLabel()
     status.setWordWrap(True)
     status.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -187,7 +198,7 @@ def main() -> int:
         af = context.read_active_file()
         file_state = f"{Path(af.path).name} ({len(af.errors)} error(s))" if af else "no file"
         status.setText(
-            f"<b>Brain:</b> {brain} &nbsp; <b>Voice:</b> {'on' if voice_on else 'typed'} &nbsp; "
+            f"<b>Brain:</b> {brain} &nbsp; <b>Voice:</b> {voice_mode} &nbsp; "
             f"<b>Agent:</b> {pipeline.agent.label} &nbsp; <b>Hotkeys:</b> {voice.HOTKEY} / {voice.INVESTIGATE_HOTKEY}<br>"
             f"<b>Webhooks:</b> {hooks}"
             f" &nbsp; <b>IDE:</b> {'real VS Code extension' if args.real_ide else 'fake snapshot'} → {file_state}"
@@ -333,7 +344,7 @@ def main() -> int:
                                 text=True).stdout.strip()
         lines = ["# Manual test report", "",
                  f"- Date: {dt.datetime.now():%Y-%m-%d %H:%M}", f"- Commit: `{commit}`",
-                 f"- Brain: {brain}; voice: {'on' if voice_on else 'typed'}; agent: {pipeline.agent.label}",
+                 f"- Brain: {brain}; voice: {voice_mode}; agent: {pipeline.agent.label}",
                  f"- Webhooks: {'LIVE' if args.live_webhooks else 'sandbox inbox'}; "
                  f"IDE: {'real extension' if args.real_ide else 'fake snapshot'}",
                  f"- Fixture files unchanged by agents: {fixture_hashes() == hashes_before}",

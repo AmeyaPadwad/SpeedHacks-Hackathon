@@ -1,4 +1,5 @@
-"""Orchestrates Context -> Voice -> AI -> UI -> Dispatch, plus Screen CV -> Analysis -> Coding agent.
+"""Orchestrates Context -> Voice (ElevenLabs call or Whisper) -> AI -> UI -> Dispatch,
+plus Active file -> Analysis -> Coding agent.
 
 Lives on the Qt main thread; slow steps run in threads and come back through `_deliver`.
 """
@@ -9,7 +10,7 @@ from dataclasses import replace
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from . import agents, context, dispatch, voice
+from . import agents, context, dispatch, eleven, voice
 from .agents import AgentError, AgentTask
 from .analyst import Analysis, Analyst
 from .brain import PLATFORM_WORDS, Brain, BrainError, Draft
@@ -37,7 +38,7 @@ class Pipeline(QObject):
                  record=voice.record_until_silence, transcribe=voice.transcribe, send=dispatch.dispatch,
                  configured=dispatch.configured, analyst: Analyst | None = None, pick_agent=agents.pick_agent,
                  copy_text=None, show_result=None, use_voice=True, spawn=_thread,
-                 capture_delay_ms=CAPTURE_DELAY_MS, memory=None, world=None):
+                 capture_delay_ms=CAPTURE_DELAY_MS, memory=None, world=None, voice_call=None):
         super().__init__()
         self.overlay = overlay
         self.memory, self.world = memory, world   # db.Store / db.WorldModel, optional
@@ -60,6 +61,9 @@ class Pipeline(QObject):
         self.pending: dict[str, Draft | AgentTask | str] = {}
         self._last_request = 0.0
         self._requests = 0
+        # ElevenLabs voice agent: factory(on_tool=, on_text=, on_state=, on_end=) -> eleven.Call-like object.
+        self._make_call = voice_call
+        self.call = None
 
         self._deliver.connect(self._on_deliver)
         self.hotkey_pressed.connect(self.trigger)
@@ -103,7 +107,13 @@ class Pipeline(QObject):
         return not (self.overlay.paused or self.busy) and self.overlay.context_allowed
 
     def trigger(self):
+        if self._in_call():
+            self.call.stop()   # the hotkey toggles the voice call: second press hangs up
+            return
         if not self._can_start():
+            return
+        if self._make_call is not None and self.use_voice:
+            self._start_call()
             return
         self._capture_then(self._listen)
 
@@ -164,6 +174,73 @@ class Pipeline(QObject):
         p = Proposal(title=title, body=body, action_label="Send")
         self.pending[p.id] = d
         self.overlay.propose(p)
+
+    # --- ElevenLabs voice call (Flow-chan) ----------------------------------
+    def _in_call(self) -> bool:
+        return self.call is not None and self.call.active
+
+    def _bubble_free(self) -> bool:
+        """Agent chatter never covers a pending approval or the typed-input box."""
+        return self.overlay.bubble.proposal is None and not self.overlay.bubble.asking
+
+    def _start_call(self):
+        gen = self.gen
+        self.busy = True   # proactive offers wait while you're talking
+
+        def deliver(fn):
+            self._deliver.emit(gen, fn)
+
+        self.call = self._make_call(
+            on_tool=lambda name, params: self._call_tool(gen, name, params),
+            on_text=lambda text: deliver(lambda: self._call_said(text)),
+            on_state=lambda state: deliver(lambda: self._call_state(state)),
+            on_end=lambda err: deliver(lambda: self._call_ended(err)))
+        self.overlay.say("Calling Flow-chan... press the hotkey again to hang up.", title="Voice", seconds=None)
+        self.overlay.set_state("thinking")
+        self.call.start(eleven.context_update(self._read_file()))
+
+    def _call_tool(self, gen: int, name: str, params: dict) -> str:
+        """Runs on the call's reader thread: validate here, show UI via _deliver. Never sends anything."""
+        if name == eleven.MESSAGE_TOOL:
+            d = eleven.tool_draft(params)        # BrainError -> the agent is told to fix its arguments
+            self._deliver.emit(gen, lambda: self._call_drafted(d))
+            return eleven.PROPOSED
+        if name == eleven.INVESTIGATE_TOOL:
+            request = str(params.get("request", "")).strip()[:500]
+            self._deliver.emit(gen, lambda: self._call_investigate(request))
+            return ("Pette is analysing the open file and will show a proposal for the coding agent. "
+                    "Nothing runs until the user approves.")
+        raise BrainError(f"Unknown tool {name!r}.")
+
+    def _call_drafted(self, d: Draft):
+        self._command = d.platform   # the agent named the platform: no "usual platform" override
+        self._drafted(d)
+
+    def _call_investigate(self, request: str):
+        self.ctx = context.Context(None, self._read_file())
+        self._analyze(request=request)
+
+    def _call_said(self, text: str):
+        if self._bubble_free():
+            self.overlay.say(text, title="Flow-chan", seconds=None)
+
+    def _call_state(self, state: str):
+        if self._bubble_free():
+            self.overlay.set_state(state)
+
+    def _call_ended(self, err):
+        self.call = None
+        self.busy = False
+        if not self._bubble_free():
+            return
+        if err:
+            self.overlay.ask_text(f"{err} Type your command instead:")
+        else:
+            self.overlay.say("Call ended.", title="Voice", seconds=3)
+
+    def _tell_call(self, text: str):
+        if self._in_call():
+            self.call.tell(text)
 
     # --- active file -> analysis -> coding agent ---------------------------
     def investigate(self):
@@ -239,10 +316,12 @@ class Pipeline(QObject):
 
             def sent(msg):
                 self._remember_message(item, "sent")
+                self._tell_call(f"The user clicked Send. {msg}")
                 self.overlay.say(msg, seconds=4)
 
             def failed(e):
                 self._remember_message(item, "failed")
+                self._tell_call(f"The user clicked Send but it failed: {e}")
                 self._fail(e)
 
             self._run(lambda: self._send(item), sent, failed, DispatchError)
@@ -255,6 +334,7 @@ class Pipeline(QObject):
             self._remember_offer("agent", "declined")
         elif isinstance(item, Draft):
             self._remember_message(item, "cancelled")
+            self._tell_call(f"The user cancelled the {item.platform} draft to {item.recipient}. Nothing was sent.")
 
     def _pinch_on_proposal(self, pid: str):
         """Pinch on a pending message draft = discard it and dictate again. Never sends anything."""
@@ -264,6 +344,9 @@ class Pipeline(QObject):
         self.pending.pop(pid)
         self._remember_message(item, "cancelled")
         self.overlay.dismiss()
+        if self._in_call():   # already talking: let Flow-chan redo it instead of starting a new call
+            self.call.tell("The user discarded that draft with a gesture. Ask what to change. Nothing was sent.")
+            return
         self.trigger()
 
     # --- memory (facts only: no message text, screenshots or code) --------
@@ -280,11 +363,14 @@ class Pipeline(QObject):
         self.overlay.say(str(msg), title="Couldn't finish", seconds=6)
 
     def _reset(self):
-        self.busy = False
+        self.busy = self._in_call()   # an open voice call still counts as busy
         self.ctx = None  # drop the screenshot as soon as it's no longer needed
 
     def _paused(self, paused: bool):
         if paused:
+            if self.call is not None:
+                self.call.stop()   # pause hangs up; the mic is released at once
+                self.call = None
             self.gen += 1  # late results from in-flight work are ignored
             self.pending.clear()
             self._reset()

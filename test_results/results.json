@@ -7,7 +7,7 @@
   {
     "check": "Unit + integration tests",
     "status": "PASS",
-    "detail": "117/117 passed, 0 failed, 0 errors, 0 skipped in 24.1s"
+    "detail": "131/131 passed, 0 failed, 0 errors, 0 skipped in 25.4s"
   },
   {
     "check": "MediaPipe models",
@@ -43,6 +43,11 @@
     "check": "Claude Code agent (live, read-only)",
     "status": "SKIP",
     "detail": "--no-agent"
+  },
+  {
+    "check": "ElevenLabs voice agent",
+    "status": "FAIL",
+    "detail": "agent answers but never called propose_message: add the client tools from tools/elevenlabs_agent_tools.json in the ElevenLabs dashboard"
   },
   {
     "check": "Hermes agent",
