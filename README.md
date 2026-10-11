@@ -158,9 +158,27 @@ py tools/cv_check.py                 # live webcam signal checker
 
 Latest results: [test_results/REPORT.md](test_results/REPORT.md).
 
+### Manual testing sandbox
+`tools/sandbox.py` runs the real app (same hotkeys, tray, focus gate, pipeline and agents) next to a control panel, so you can check every feature by hand without touching real channels or your real memory:
+
+```powershell
+py tools/sandbox.py                  # real OpenAI + voice; sandbox webhooks, IDE snapshot and db
+py tools/sandbox.py --demo           # offline: typed commands, keyword drafter
+py tools/sandbox.py --live-webhooks  # really post to the Slack/Discord webhooks in .env
+py tools/sandbox.py --real-ide       # use the VS Code extension's snapshot instead of the fake one
+```
+
+- **Webhook inbox:** Slack and Discord posts land in the panel instead of real channels. Tick *Make webhooks fail* to test the HTTP 500 path. Email is left unconfigured unless `--live-webhooks`.
+- **Fake VS Code:** one click sets the active file to `fixtures/buggy_app/dashboard.py` with or without its error, or to no file.
+- **Simulated webcam:** face away/back, eyes closed/open and pinch, with no camera needed. `--camera` still uses the real one.
+- **Triggers:** ask, investigate, pause, *Fast proactive* (3 s instead of 20 s) and *Reset offers*.
+- **Checklist:** 24 scenarios with how-to and expected results. Mark each Pass/Fail/Skip, add notes, and save to `test_results/MANUAL_TEST.md`.
+
+Contacts (`sarah`, `alex`) and the memory db live in a temp folder that is deleted when you close the panel. Other flags (`--no-voice`, `--camera`, `--always-show`) are passed to `main.py`.
+
 ## Status
 - **Checked:**
-  - 114 tests, plus live system checks: see [test_results/REPORT.md](test_results/REPORT.md).
+  - 113 tests, plus live system checks: see [test_results/REPORT.md](test_results/REPORT.md).
   - Live Slack and Discord webhook posts.
   - A live Claude Code read-only investigation of `fixtures/buggy_app`: correct root cause and a diff, with no files modified.
   - The camera opens and MediaPipe runs on Windows 11 with Python 3.13.

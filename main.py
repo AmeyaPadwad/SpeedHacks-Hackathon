@@ -3,6 +3,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from dotenv import load_dotenv
 
@@ -22,7 +23,7 @@ from pet.ui import Overlay, ResultPanel  # noqa: E402
 from pet.watcher import Watcher  # noqa: E402
 
 
-def main() -> int:
+def parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="FlowState voice agent")
     ap.add_argument("--no-voice", action="store_true", help="type commands instead of speaking them")
     ap.add_argument("--demo", action="store_true",
@@ -30,9 +31,12 @@ def main() -> int:
     ap.add_argument("--camera", action="store_true", help="turn on the webcam (local face/eyes/pinch) at launch")
     ap.add_argument("--always-show", action="store_true",
                     help="show Pette over every app, not only VS Code and terminals")
-    args = ap.parse_args()
+    return ap.parse_args(argv)
 
-    app = QApplication(sys.argv)
+
+def build(args: argparse.Namespace) -> SimpleNamespace:
+    """Create and wire every component without entering the event loop (tools/sandbox.py reuses this)."""
+    app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     overlay = Overlay()
     results = ResultPanel()
@@ -114,7 +118,12 @@ def main() -> int:
         overlay.say(f"Press {keys}", seconds=7)
     else:
         overlay.say("Global hotkeys unavailable. Click me to ask, or use the tray to investigate.", seconds=6)
-    return app.exec()
+    return SimpleNamespace(app=app, overlay=overlay, results=results, memory=memory, world=world,
+                           pipeline=pipeline, watcher=watcher, gate=gate, camera_action=camera_action)
+
+
+def main(argv=None) -> int:
+    return build(parse_args(argv)).app.exec()
 
 
 if __name__ == "__main__":

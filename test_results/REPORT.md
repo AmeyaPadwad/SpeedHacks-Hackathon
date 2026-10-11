@@ -1,22 +1,21 @@
 # Pette check report
 
-- **When:** 2026-10-11 14:26 local, took 63s
-- **Code:** `dev` @ `07a3704` (checks run on the working tree before this report was committed)
-- **Result:** 8 pass, 1 fail, 3 skipped, 2 info
+- **When:** 2026-10-11 15:09 local, took 32s
+- **Code:** `dev` @ `da7d0c8` (checks run on the working tree before this report was committed)
+- **Result:** 5 pass, 0 fail, 6 skipped, 2 info
 - **Regenerate:** `py tools/run_checks.py` (add `--webhooks` to also post a test message)
 
 | Check | Result | Detail |
 |---|---|---|
 | Environment | INFO | Windows 11 (10.0.26200), Python 3.13.9, PySide6 6.8.3, OpenCV 5.0.0, MediaPipe 1.1.0, openai 2.46.0 |
-| Unit + integration tests | PASS | 114/114 passed, 0 failed, 0 errors, 0 skipped in 18.6s |
+| Unit + integration tests | PASS | 113/113 passed, 0 failed, 0 errors, 0 skipped in 23.0s |
 | MediaPipe models | PASS | face + hand landmarker present |
-| Webcam: face / eyes / hands (live) | PASS | 107 frames in 4s, face in 107/107, hand in 0/107, open-eye blink score avg 0.14 (closed threshold 0.6); camera released |
+| Webcam: face / eyes / hands (live) | SKIP | --no-camera |
 | Foreground app detection | PASS | foreground = Code.exe -> show Pette |
-| Screen CV on the real screen | PASS | 1920x1200, 15 error-coloured region(s), 83 ms (image discarded) |
 | VS Code bridge snapshot | SKIP | no snapshot at ~/.flowstate_current.json (extension not installed or no file open) |
 | db cache + world model | PASS | write -> learn -> read round trip in a temp db |
-| OpenAI (GPT-4o / Whisper) | **FAIL** | OpenAI account has no credits. Add billing at platform.openai.com. (app falls back to labelled local analysis) |
-| Claude Code agent (live, read-only) | PASS | answered in 25s, 2600 chars, root cause + diff: yes, fixture files unchanged: yes |
+| OpenAI (GPT-4o / Whisper) | SKIP | OPENAI_API_KEY not set |
+| Claude Code agent (live, read-only) | SKIP | --no-agent |
 | Hermes agent | INFO | installed (adapter unit-tested; live run not part of checks) |
 | Slack webhook | SKIP | configured; live post skipped (run with --webhooks) |
 | Discord webhook | SKIP | configured; live post skipped (run with --webhooks) |
@@ -26,7 +25,7 @@
 
 | File | Passed | Failed |
 |---|---|---|
-| `test_agents` | 15 | 0 |
+| `test_agents` | 16 | 0 |
 | `test_brain` | 15 | 0 |
 | `test_context` | 4 | 0 |
 | `test_cv_flow` | 14 | 0 |
@@ -36,7 +35,7 @@
 | `test_focus` | 10 | 0 |
 | `test_message_cv` | 12 | 0 |
 | `test_pipeline` | 8 | 0 |
-| `test_screen_cv` | 6 | 0 |
+| `test_sandbox` | 4 | 0 |
 | `test_vision` | 6 | 0 |
 | `test_voice` | 3 | 0 |
 

@@ -7,7 +7,7 @@
   {
     "check": "Unit + integration tests",
     "status": "PASS",
-    "detail": "114/114 passed, 0 failed, 0 errors, 0 skipped in 18.6s"
+    "detail": "113/113 passed, 0 failed, 0 errors, 0 skipped in 23.0s"
   },
   {
     "check": "MediaPipe models",
@@ -16,18 +16,13 @@
   },
   {
     "check": "Webcam: face / eyes / hands (live)",
-    "status": "PASS",
-    "detail": "107 frames in 4s, face in 107/107, hand in 0/107, open-eye blink score avg 0.14 (closed threshold 0.6); camera released"
+    "status": "SKIP",
+    "detail": "--no-camera"
   },
   {
     "check": "Foreground app detection",
     "status": "PASS",
     "detail": "foreground = Code.exe -> show Pette"
-  },
-  {
-    "check": "Screen CV on the real screen",
-    "status": "PASS",
-    "detail": "1920x1200, 15 error-coloured region(s), 83 ms (image discarded)"
   },
   {
     "check": "VS Code bridge snapshot",
@@ -41,13 +36,13 @@
   },
   {
     "check": "OpenAI (GPT-4o / Whisper)",
-    "status": "FAIL",
-    "detail": "OpenAI account has no credits. Add billing at platform.openai.com. (app falls back to labelled local analysis)"
+    "status": "SKIP",
+    "detail": "OPENAI_API_KEY not set"
   },
   {
     "check": "Claude Code agent (live, read-only)",
-    "status": "PASS",
-    "detail": "answered in 25s, 2600 chars, root cause + diff: yes, fixture files unchanged: yes"
+    "status": "SKIP",
+    "detail": "--no-agent"
   },
   {
     "check": "Hermes agent",

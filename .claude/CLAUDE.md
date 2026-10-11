@@ -26,7 +26,10 @@ py tools/get_models.py                  # MediaPipe models for the webcam featur
 py -m pytest -q                         # all tests; conftest forces QT_QPA_PLATFORM=offscreen
 py -m pytest tests/test_pipeline.py::test_pause_drops_late_results -q   # single test
 py tools/prep_sprites.py                # rebuild assets/pette_sheet.png (needs Pillow + numpy)
+py tools/sandbox.py [--demo] [--live-webhooks] [--real-ide]   # manual test panel around the real app
 ```
+
+`tools/sandbox.py` reuses `main.build()`; keep wiring changes in `build()` so the sandbox stays the real app. It sets env vars before importing `main`/`pet` (they read settings at import time). Add new user-facing features to its `SCENARIOS` checklist.
 
 Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
 
