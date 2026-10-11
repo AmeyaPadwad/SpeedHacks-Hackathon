@@ -272,6 +272,7 @@ class Overlay(QWidget):
     text_submitted = Signal(str)
     input_cancelled = Signal()
     investigate_requested = Signal()
+    pinch_on_proposal = Signal(str)   # proposal id; pipeline decides (re-dictate drafts, ignore the rest)
 
     def __init__(self, sheet: SpriteSheet | None = None, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -333,13 +334,31 @@ class Overlay(QWidget):
         self.pet.update()
 
     def pinch(self):
-        """Gesture control: open Pette or dismiss a plain message. Never approves or cancels proposals."""
-        if self.paused or self.bubble.proposal or self.bubble.asking:
+        """Gesture control for the message workflow. A gesture never approves (sends) anything.
+
+        - idle: push-to-talk (same as the hotkey)
+        - plain message showing: dismiss it
+        - proposal pending: ask the pipeline to re-dictate (it only does so for message drafts)
+        - typing a command: ignored
+        """
+        if self.paused or self.bubble.asking or not self.context_allowed:
             return
-        if self.bubble.isVisible():
+        if self.bubble.proposal:
+            self.pinch_on_proposal.emit(self.bubble.proposal.id)
+        elif self.bubble.isVisible():
             self.dismiss()
         else:
             self.ask_requested.emit()
+
+    def nudge(self):
+        """Bring a pending proposal back to attention (e.g. when the user returns to the camera)."""
+        p = self.bubble.proposal
+        if self.paused or p is None or self.bubble.isHidden():   # isHidden: works while Pette herself is hidden
+            return
+        if not self.bubble.title.text().startswith("Still "):
+            self.bubble.title.setText(f"Still {p.action_label.lower()}? · {p.title}")
+        self.set_state("speaking")
+        self.raise_()
 
     def add_menu_action(self, text: str, slot=None, *, checkable=False, checked=False) -> QAction | None:
         """Insert a tray action above Bring to front / Quit. No-op without a tray (tests)."""

@@ -39,7 +39,10 @@ class VisionPolicy:
     BLINK_ON, BLINK_OFF, BLINK_HOLD_S = 0.6, 0.4, 0.3
     PINCH_ON, PINCH_REARM, PINCH_HOLD_S, PINCH_COOLDOWN_S = 0.25, 0.4, 0.5, 2.0
 
-    def __init__(self):
+    def __init__(self, blink_on: float | None = None):
+        if blink_on is not None:  # calibrated per user by the world model; reopen stays 0.2 below
+            self.BLINK_ON = blink_on
+            self.BLINK_OFF = max(0.2, blink_on - 0.2)
         self.present = True
         self.eyes_closed = False
         self._face_change_since: float | None = None
@@ -114,14 +117,37 @@ def blink_scores(blendshapes) -> tuple[float, float]:
     return scores.get("eyeBlinkLeft", 0.0), scores.get("eyeBlinkRight", 0.0)
 
 
-class CameraWorker(QThread):
-    """Owns the camera and MediaPipe tasks on its own thread. Emits event names only."""
-    event = Signal(str)
-    status = Signal(str)   # human-readable camera status for the UI
+class BaselineMeter:
+    """Summarises open-eye blink scores over a window (numbers only) for threshold calibration."""
+    WINDOW_S = 30
 
-    def __init__(self, camera_index: int = CAMERA_INDEX):
+    def __init__(self):
+        self._samples: list[float] = []
+        self._start: float | None = None
+
+    def add(self, o: Observation, eyes_closed: bool) -> dict | None:
+        if self._start is None:
+            self._start = o.t
+        if o.face and not eyes_closed:
+            self._samples.append(max(o.blink_left, o.blink_right))
+        if o.t - self._start < self.WINDOW_S:
+            return None
+        s, self._samples, self._start = sorted(self._samples), [], o.t
+        if len(s) < 20:
+            return None
+        return {"mean": round(sum(s) / len(s), 3), "p95": round(s[int(len(s) * 0.95) - 1], 3), "samples": len(s)}
+
+
+class CameraWorker(QThread):
+    """Owns the camera and MediaPipe tasks on its own thread. Emits event names and blink summaries only."""
+    event = Signal(str)
+    status = Signal(str)     # human-readable camera status for the UI
+    baseline = Signal(dict)  # {"mean", "p95", "samples"} every ~30 s, for the world model
+
+    def __init__(self, camera_index: int = CAMERA_INDEX, blink_on: float | None = None):
         super().__init__()
         self.camera_index = camera_index
+        self.blink_on = blink_on
         self._running = False
 
     def stop(self):
@@ -153,7 +179,8 @@ class CameraWorker(QThread):
             num_faces=1, output_face_blendshapes=True))
         hand = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(HAND_MODEL)), running_mode=mode, num_hands=1))
-        policy = VisionPolicy()
+        policy = VisionPolicy(self.blink_on)
+        meter = BaselineMeter()
         self._running = True
         self.status.emit("Camera on (processed locally)")
         last_ts, period = -1, 1.0 / MAX_FPS
@@ -173,8 +200,11 @@ class CameraWorker(QThread):
                 has_face = bool(fr.face_landmarks)
                 bl, br = blink_scores(fr.face_blendshapes[0]) if has_face and fr.face_blendshapes else (0.0, 0.0)
                 pr = pinch_ratio(hr.hand_landmarks[0]) if hr.hand_landmarks else None
-                for ev in policy.update(Observation(start, has_face, bl, br, pr)):
+                obs = Observation(start, has_face, bl, br, pr)
+                for ev in policy.update(obs):
                     self.event.emit(ev)
+                if (summary := meter.add(obs, policy.eyes_closed)) is not None:
+                    self.baseline.emit(summary)
                 del frame, rgb, image  # frames are never kept
                 time.sleep(max(0.0, period - (time.monotonic() - start)))
         finally:

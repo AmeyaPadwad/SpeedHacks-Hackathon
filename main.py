@@ -12,6 +12,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from PySide6.QtGui import QActionGroup  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from db import Store, WorldModel  # noqa: E402
 from pet import agents, voice  # noqa: E402
 from pet.analyst import LocalAnalyst  # noqa: E402
 from pet.brain import OfflineBrain  # noqa: E402
@@ -35,10 +36,14 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     overlay = Overlay()
     results = ResultPanel()
+    memory = Store()                    # db/pette_cache.sqlite3: facts only, local, 30-day retention
+    world = WorldModel(memory)
     pipeline = Pipeline(overlay, OfflineBrain() if args.demo else None,
                         analyst=LocalAnalyst() if args.demo else None,
-                        show_result=results.show_result, use_voice=not (args.no_voice or args.demo))
-    watcher = Watcher(overlay, lambda: pipeline.busy)
+                        show_result=results.show_result, use_voice=not (args.no_voice or args.demo),
+                        memory=memory, world=world)
+    watcher = Watcher(overlay, lambda: pipeline.busy, memory=memory, world=world)
+    app.aboutToQuit.connect(memory.close)
     watcher.offer.connect(pipeline.offer_investigation)
     gate = FocusGate(overlay)
     overlay.add_menu_action("Show only in VS Code / Terminal", gate.set_enabled, checkable=True,
@@ -59,6 +64,18 @@ def main() -> int:
             if act:
                 group.addAction(act)
                 act.triggered.connect(lambda _=False, n=a.name: setattr(pipeline, "agent_name", n))
+
+    # --- tray: memory / world model ---
+    overlay.add_menu_action("Remember my patterns", lambda on: setattr(memory, "enabled", on),
+                            checkable=True, checked=True)
+    overlay.add_menu_action("What Pette learned", lambda: overlay.say(world.summary(), title="Pette's memory",
+                                                                      seconds=15))
+
+    def clear_memory():
+        memory.clear()
+        overlay.say("Memory cleared. Back to defaults.", title="Pette's memory", seconds=5)
+
+    overlay.add_menu_action("Clear Pette memory", clear_memory)
 
     def on_camera_status(text: str):
         if "unavailable" in text or "disconnected" in text:

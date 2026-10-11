@@ -4,13 +4,14 @@ Lives on the Qt main thread; slow steps run in threads and come back through `_d
 """
 import threading
 import time
+from dataclasses import replace
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from . import agents, context, dispatch, voice
 from .agents import AgentError, AgentTask
 from .analyst import Analysis, Analyst
-from .brain import Brain, BrainError, Draft
+from .brain import PLATFORM_WORDS, Brain, BrainError, Draft
 from .dispatch import DispatchError
 from .ui import Overlay, Proposal
 from .voice import VoiceError
@@ -34,9 +35,11 @@ class Pipeline(QObject):
                  record=voice.record_until_silence, transcribe=voice.transcribe, send=dispatch.dispatch,
                  configured=dispatch.configured, analyst: Analyst | None = None, pick_agent=agents.pick_agent,
                  copy_text=None, show_result=None, use_voice=True, spawn=_thread,
-                 capture_delay_ms=CAPTURE_DELAY_MS):
+                 capture_delay_ms=CAPTURE_DELAY_MS, memory=None, world=None):
         super().__init__()
         self.overlay = overlay
+        self.memory, self.world = memory, world   # db.Store / db.WorldModel, optional
+        self._command = ""
         self.brain = brain or Brain()
         self.analyst = analyst or Analyst()
         self._capture, self._record, self._transcribe = capture, record, transcribe
@@ -63,7 +66,8 @@ class Pipeline(QObject):
         overlay.text_submitted.connect(self._heard)
         overlay.input_cancelled.connect(self._reset)
         overlay.approved.connect(self._approved)
-        overlay.cancelled.connect(lambda pid: self.pending.pop(pid, None))
+        overlay.cancelled.connect(self._cancelled)
+        overlay.pinch_on_proposal.connect(self._pinch_on_proposal)
         overlay.pause_toggled.connect(self._paused)
 
     @property
@@ -124,6 +128,9 @@ class Pipeline(QObject):
         if self.overlay.paused or not self._rate_ok():
             return
         self.busy = True
+        self._command = command
+        if self.world is not None and hasattr(self.brain, "contacts"):
+            self.brain.contacts = dict(self.world.known_contacts())
         self.overlay.say(f"“{command}”", title="Heard", seconds=None)
         self.overlay.set_state("thinking")
         ctx = self.ctx or context.Context(None, None)
@@ -138,7 +145,14 @@ class Pipeline(QObject):
         if d.platform == "none":
             self.overlay.say(d.message, title=label or "FlowState", seconds=15)
             return
-        title = f"{d.platform.capitalize()} to {d.recipient}"
+        learned = ""
+        if self.world is not None and not PLATFORM_WORDS.search(self._command):
+            usual = self.world.preferred_platform(d.recipient)
+            if usual and usual != d.platform:   # you didn't name a platform: use the one you usually use
+                d = replace(d, platform=usual)
+            learned = " (usual)" if usual else ""
+        self._remember_message(d, "drafted")
+        title = f"{d.platform.capitalize()}{learned} to {d.recipient}"
         if not self._configured(d.platform):
             title += " (not configured)"
         if label:
@@ -162,6 +176,7 @@ class Pipeline(QObject):
         p = Proposal(title="Looks like you're stuck", body=f"{reason}\n\nWant me to look at your screen and "
                      f"prepare a task for {self.agent.label}?", action_label="Investigate")
         self.pending[p.id] = OFFER
+        self._remember_offer("proactive", "shown")
         self.overlay.propose(p)
 
     def _analyze(self, request: str = ""):
@@ -210,12 +225,51 @@ class Pipeline(QObject):
         if item is None:
             return
         if item == OFFER:
+            self._remember_offer("proactive", "accepted")
             self.investigate()
         elif isinstance(item, AgentTask):
+            self._remember_offer("agent", "accepted")
             self._run_agent(item)
         elif isinstance(item, Draft):
             self.overlay.say("Sending...", seconds=None)
-            self._run(lambda: self._send(item), lambda msg: self.overlay.say(msg, seconds=4), self._fail, DispatchError)
+
+            def sent(msg):
+                self._remember_message(item, "sent")
+                self.overlay.say(msg, seconds=4)
+
+            def failed(e):
+                self._remember_message(item, "failed")
+                self._fail(e)
+
+            self._run(lambda: self._send(item), sent, failed, DispatchError)
+
+    def _cancelled(self, pid: str):
+        item = self.pending.pop(pid, None)
+        if item == OFFER:
+            self._remember_offer("proactive", "declined")
+        elif isinstance(item, AgentTask):
+            self._remember_offer("agent", "declined")
+        elif isinstance(item, Draft):
+            self._remember_message(item, "cancelled")
+
+    def _pinch_on_proposal(self, pid: str):
+        """Pinch on a pending message draft = discard it and dictate again. Never sends anything."""
+        item = self.pending.get(pid)
+        if not isinstance(item, Draft):
+            return  # agent tasks and offers are not touched by gestures
+        self.pending.pop(pid)
+        self._remember_message(item, "cancelled")
+        self.overlay.dismiss()
+        self.trigger()
+
+    # --- memory (facts only: no message text, screenshots or code) --------
+    def _remember_message(self, d: Draft, outcome: str):
+        if self.memory is not None and d.platform in ("slack", "discord", "email"):
+            self.memory.log_message(d.recipient, d.platform, outcome)
+
+    def _remember_offer(self, kind: str, outcome: str):
+        if self.memory is not None:
+            self.memory.log_offer(kind, outcome)
 
     def _fail(self, msg):
         self._reset()

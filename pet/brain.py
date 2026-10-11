@@ -84,8 +84,15 @@ def parse_draft(raw: str) -> Draft:
     )
 
 
-def build_messages(command: str, ctx: Context) -> list[dict]:
+PLATFORM_WORDS = re.compile(r"\b(slack|discord|e-?mail)\b", re.I)
+
+
+def build_messages(command: str, ctx: Context, contacts: dict[str, str] | None = None) -> list[dict]:
     parts: list[dict] = [{"type": "text", "text": f"Voice command: {command}"}]
+    if contacts:
+        known = ", ".join(f"{name.title()} ({platform})" for name, platform in contacts.items() if platform)
+        parts.append({"type": "text", "text": f"Known contacts and the platform the user usually messages them on: "
+                                              f"{known}. If the command names no platform, use that one."})
     af = ctx.active_file
     if af:
         text = f"Active file: {af.path} ({af.language})\n"
@@ -105,6 +112,7 @@ class Brain:
     def __init__(self, client=None, model: str | None = None):
         self._client = client
         self.model = model or os.environ.get("OPENAI_MODEL") or "gpt-4o"
+        self.contacts: dict[str, str] = {}   # name -> usual platform, from the world model
 
     @property
     def client(self):
@@ -119,7 +127,7 @@ class Brain:
         try:
             resp = self.client.chat.completions.create(
                 model=self.model,
-                messages=build_messages(command, ctx),
+                messages=build_messages(command, ctx, self.contacts),
                 response_format={"type": "json_object"},
                 max_tokens=500,
             )
@@ -137,9 +145,16 @@ class OfflineBrain:
     _RECIPIENT = re.compile(r"(?=\b(?:to|tell|ask|message|ping|email|slack|discord)\s+(?:the\s+)?([A-Za-z][\w.@-]*))", re.I)
     _SKIP = {"a", "an", "my", "to", "message", "slack", "discord", "email", "dm", "note"}
 
+    def __init__(self):
+        self.contacts: dict[str, str] = {}   # name -> usual platform, from the world model
+
     def draft(self, command: str, ctx: Context) -> Draft:
         low = command.lower()
         platform = next((p for p in ("slack", "discord", "email") if p in low), "none")
+        if platform == "none" and re.search(r"\b(message|tell|ping|text|dm)\b", low):
+            # "message Sarah ..." with no platform word: use the platform you usually reach them on
+            names = [m.lower() for m in self._RECIPIENT.findall(command) if m.lower() not in self._SKIP]
+            platform = next((self.contacts[n] for n in names if self.contacts.get(n)), "none")
         if platform == "none" and re.search(r"\b(fix|debug|investigate|why|error|bug|failing|claude|hermes|agent)\b", low):
             return Draft("agent", "", "", command.strip()[:MAX_MESSAGE])
         if platform == "none":
