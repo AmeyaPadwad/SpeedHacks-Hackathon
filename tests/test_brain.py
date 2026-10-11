@@ -75,8 +75,8 @@ def test_describe_quota_error():
 
 
 def test_brain_without_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(BrainError, match="OPENAI_API_KEY"):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(BrainError, match="GROQ_API_KEY"):
         Brain().draft("hi", Context(None, None))
 
 
@@ -86,4 +86,6 @@ def test_offline_brain_drafts():
                              Context(None, ActiveFile("C:/x/auth.py", "python", "", "")))
     assert (d.platform, d.recipient) == ("slack", "Sarah")
     assert d.message == "Hi Sarah, could you review this code in auth.py. Thanks!"
-    assert OfflineBrain().draft("what is this error", Context(None, None)).platform == "none"
+    assert OfflineBrain().draft("what is this error", Context(None, None)).platform == "agent"
+    assert OfflineBrain().draft("what time is it", Context(None, None)).platform == "none"
+    assert parse_draft(ok(platform="agent", recipient="")).platform == "agent"

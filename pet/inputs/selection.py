@@ -14,7 +14,7 @@ class SelectionError(Exception):
 
 
 PROVIDERS = {
-    "groq": {"name": "Groq", "key_env": "GROQ_API_KEY", "model_env": "GROQ_MODEL",
+    "groq": {"name": "Groq", "key_env": "GROQ_API_KEY", "model_env": "FLOWSTATE_INPUT_MODEL",
              "model": "openai/gpt-oss-20b", "url": "https://api.groq.com/openai/v1"},
     "openai": {"name": "OpenAI", "key_env": "OPENAI_API_KEY", "model_env": "OPENAI_MODEL",
                "model": "gpt-4o", "url": "https://api.openai.com/v1"},

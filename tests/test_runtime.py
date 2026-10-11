@@ -48,8 +48,16 @@ def test_input_gathering_entrypoint_closes_pet_on_ctrl_c(tmp_path):
     ready = tmp_path / "ready"
     source = """
 import sys
+import importlib.abc
 from pathlib import Path
 from PySide6.QtCore import QTimer
+
+# requests belongs to the messaging requirements, not requirements-input.txt.
+class InputOnlyDependencies(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == 'requests':
+            raise ModuleNotFoundError('requests is not installed in this input-only environment')
+sys.meta_path.insert(0, InputOnlyDependencies())
 import main
 real_application = main.QApplication
 project = Path(sys.argv[1])
@@ -58,6 +66,7 @@ def create_application(args):
     app = real_application(args)
     QTimer.singleShot(100, lambda: marker.write_text('ready'))
     return app
+create_application.instance = real_application.instance
 main.QApplication = create_application
 sys.argv = ['main.py', '--input-gathering', '--project', str(project)]
 sys.exit(main.main())

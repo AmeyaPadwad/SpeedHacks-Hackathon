@@ -9,3 +9,5 @@ models/
 .pytest_cache/
 flowstate-context*.json
 .whisper-runtime/
+db/*.sqlite3
+db/*.sqlite3-*

@@ -2,7 +2,10 @@
 import io
 import os
 
+from . import llm
+
 HOTKEY = os.environ.get("FLOWSTATE_HOTKEY") or "ctrl+shift+space"
+INVESTIGATE_HOTKEY = os.environ.get("FLOWSTATE_INVESTIGATE_HOTKEY") or "ctrl+alt+space"
 LISTEN_TIMEOUT_S = 6      # wait this long for speech to start
 PHRASE_LIMIT_S = 20       # hard cap on one command
 TRANSCRIBE_TIMEOUT_S = 20
@@ -12,11 +15,11 @@ class VoiceError(Exception):
     """Mic unavailable, nothing heard, or transcription failed; caller offers typed input instead."""
 
 
-def register_hotkey(callback) -> bool:
+def register_hotkey(callback, hotkey: str = HOTKEY) -> bool:
     """Call `callback` (on the keyboard library's thread) when the hotkey is pressed. False if unavailable."""
     try:
         import keyboard
-        keyboard.add_hotkey(HOTKEY, callback, suppress=False)
+        keyboard.add_hotkey(hotkey, callback, suppress=False)
         return True
     except Exception:  # missing package, or OS refused the hook
         return False
@@ -50,19 +53,17 @@ def record_until_silence() -> bytes:
 
 
 def transcribe(wav: bytes, client=None) -> str:
-    """Whisper speech-to-text. Audio stays in memory and is not saved."""
+    """Whisper speech-to-text on Groq. Audio stays in memory and is not saved."""
     if client is None:
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise VoiceError("OPENAI_API_KEY is not set.")
-        from openai import OpenAI
-        client = OpenAI(timeout=TRANSCRIBE_TIMEOUT_S, max_retries=0)
+        client = llm.client(TRANSCRIBE_TIMEOUT_S)
+        if client is None:
+            raise VoiceError(f"{llm.KEY_VAR} is not set.")
     f = io.BytesIO(wav)
     f.name = "command.wav"
     try:
-        text = client.audio.transcriptions.create(model="whisper-1", file=f).text
+        text = client.audio.transcriptions.create(model=llm.stt_model(), file=f).text
     except Exception as e:
-        from .brain import describe_openai_error
-        raise VoiceError(describe_openai_error(e)) from e
+        raise VoiceError(llm.describe_error(e)) from e
     text = (text or "").strip()
     if not text:
         raise VoiceError("Couldn't make out any words.")

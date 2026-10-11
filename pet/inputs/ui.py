@@ -1,5 +1,6 @@
 """Review overlay for the coding-input mode, with explicit packet approval/export."""
 from pathlib import Path
+from types import SimpleNamespace
 import time
 
 from PySide6.QtCore import Qt, QTimer, QUrl
@@ -358,7 +359,7 @@ class InputPanel(QWidget):
         event.ignore()
 
 
-def run_input_gathering(app, project: Path, *, on_packet_ready=None):
+def build_input_gathering(app, project: Path, *, on_packet_ready=None):
     from .companion import InputCompanion
 
     service = CollectionService(project, on_packet_ready=on_packet_ready)
@@ -371,5 +372,11 @@ def run_input_gathering(app, project: Path, *, on_packet_ready=None):
     app.aboutToQuit.connect(hotkeys.close)
     app.aboutToQuit.connect(service.close)
     app.aboutToQuit.connect(companion.close)
+    return SimpleNamespace(app=app, service=service, panel=panel, companion=companion,
+                           overlay=companion.overlay, hotkeys=hotkeys)
+
+
+def run_input_gathering(app, project: Path, *, on_packet_ready=None):
     # Keep wrappers alive through the event loop.
-    return app.exec()
+    ctx = build_input_gathering(app, project, on_packet_ready=on_packet_ready)
+    return ctx.app.exec()

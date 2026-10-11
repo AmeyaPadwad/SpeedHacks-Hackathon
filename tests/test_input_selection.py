@@ -140,7 +140,7 @@ def test_exhausted_credit_error_explains_manual_fallback(tmp_path):
 
 
 @pytest.mark.parametrize("provider, key_env, model_env, model, url", [
-    ("groq", "GROQ_API_KEY", "GROQ_MODEL", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1"),
+    ("groq", "GROQ_API_KEY", "FLOWSTATE_INPUT_MODEL", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1"),
     ("openai", "OPENAI_API_KEY", "OPENAI_MODEL", "gpt-4o", "https://api.openai.com/v1"),
 ])
 def test_provider_routes_only_its_own_key_and_closes_client(tmp_path, monkeypatch, provider, key_env, model_env, model, url):
@@ -197,8 +197,9 @@ def test_provider_and_model_configuration_are_independent(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
     assert FileSelector().provider == "groq"
     assert FileSelector().model == "openai/gpt-oss-20b"
-    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
-    assert FileSelector().model == "openai/gpt-oss-120b"
+    # Messaging's vision model must not override the collector's text model.
+    monkeypatch.setenv("GROQ_MODEL", "vision-model")
+    assert FileSelector().model == "openai/gpt-oss-20b"
     monkeypatch.setenv("FLOWSTATE_INPUT_MODEL", "custom-override")
     assert FileSelector().model == "custom-override"
     assert FileSelector(model="explicit-model").model == "explicit-model"
