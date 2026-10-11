@@ -4,15 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Hackathon project with two overlapping concepts; only the overlay UI exists in code:
+`README.md` is the spec being built: **FlowState**, a hotkey + voice + screenshot + active-file agent that drafts Slack, Discord or email messages for approval. It is shown on screen as the **Pette** sprite. All five README modules and the VS Code extension are implemented.
 
-- `README.md`: **FlowState**, a hotkey + voice + screenshot + active-file agent that drafts a Slack/Discord/email message for approval. Its planned modules are input, context capture, AI router, floating UI and dispatch connectors.
-- `brainstorming/BUILD.md`: **Pette**, a Windows desktop pet with webcam face/eye/pinch signals and screenshot-to-AI advice. It has its own file layout, security rules and acceptance checklist.
-- `brainstorming/VISUAL_CODING_COMPANION.md`: an Electron-based alternative spec. It is not being built.
+The `brainstorming/` files are alternative specs and are not being built. They are a reference only:
 
-The implemented overlay UI uses the Pette sprite for the FlowState confirmation window. When the specs disagree, ask which one applies.
+- `BUILD.md`: a webcam desktop pet.
+- `VISUAL_CODING_COMPANION.md`: an Electron coding companion.
 
-There are no tests, linter or build config yet. `main.py` shows a canned proposal labeled DEMO, and Send does nothing. Don't present it as real AI or dispatch output.
+If a request clearly targets one of them, ask before mixing it in.
 
 ## Git workflow
 
@@ -21,33 +20,33 @@ Commit and push often, after every meaningful step, without asking first. Small 
 ## Commands
 
 ```powershell
-py -m pip install -r requirements.txt   # PySide6 only; tools/prep_sprites.py also needs Pillow + numpy
-py main.py                              # run the overlay (tray icon + floating pet)
-python tools/prep_sprites.py            # regenerate assets/pette_sheet.png from images/pette-spritesheet.png
+py -m pip install -r requirements.txt
+py main.py [--no-voice]                 # run; needs OPENAI_API_KEY (see .env.example)
+py -m pytest -q                         # all tests; conftest forces QT_QPA_PLATFORM=offscreen
+py -m pytest tests/test_pipeline.py::test_pause_drops_late_results -q   # single test
+py tools/prep_sprites.py                # rebuild assets/pette_sheet.png (needs Pillow + numpy)
 ```
 
-Offscreen smoke test, used instead of a test suite so far: set `QT_QPA_PLATFORM=offscreen`, build `Overlay(tray=False)`, then drive it with `propose()` / `bubble.primary.click()` / `set_paused()`. Offscreen rendering has no fonts, so text shows as boxes.
+Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
 
 ## Architecture
 
-- `pet/sprites.py`: loads `assets/pette_sheet.png`, a 3x2 grid of equal cells, row-major. `ANIMATIONS` maps a state name to frame indices. The frame order is a contract with `tools/prep_sprites.py`.
-- `pet/ui.py`:
-  - `Overlay` is the top-level frameless always-on-top window and the integration surface: `propose(Proposal)`, `say(text)`, `set_state()`, `set_paused()`, plus the signals `approved(id)`, `cancelled(id)`, `ask_requested` and `pause_toggled`.
-  - `PetWidget` paints the sprite and separates click from drag.
-  - `Bubble` holds the message and the Send/Cancel buttons.
-- `main.py` only wires demo behavior to the `Overlay` signals.
+`pet/pipeline.py` is the hub. Read it first: it connects `Overlay` signals to the flow and owns all state.
 
-Invariants to keep:
+- **Threading:** `Pipeline` lives on the Qt main thread. Slow work (record, transcribe, draft, dispatch) runs through `_run()` in daemon threads, and results come back through the `_deliver(gen, fn)` signal, which Qt queues onto the main thread. Never touch widgets from a worker. The `keyboard` hotkey fires on its own thread, so it must emit `pipeline.hotkey_pressed`, never call `trigger()` directly.
+- **Generation guard:** pause increments `gen`. `_on_deliver` drops any result whose `gen` is stale. Any new async step must go through `_run()` to keep this guarantee.
+- **Approval:** `Bubble._consume()` makes Send single-use and ties it to `Proposal.id`. `Pipeline.pending` maps that ID to a `Draft`, and dispatch happens only in `_approved(pid)`. Never dispatch from a timer, from the brain result, or without a pending entry.
+- **Errors:** each module raises one recoverable exception type (`VoiceError`, `BrainError`, `DispatchError`) with a short message suitable for the user. The pipeline shows it in the bubble. There are no automatic retries. A `VoiceError` falls back to `Overlay.ask_text()` for a typed command.
+- **Brain contract:** `parse_draft` requires exactly the keys `{platform, recipient, subject, message}`, with platform in `PLATFORMS`. `none` means "answer the question", shown as text with no Send button. Changing the schema means updating `SYSTEM_PROMPT`, `parse_draft`, `Pipeline._drafted` and the tests together.
+- **Dependency injection:** `Pipeline`, `Brain` and `voice.transcribe` take their collaborators (client, capture, record, send, spawn) as parameters. Tests pass fakes and `spawn=lambda f: f()` to run synchronously. Follow this pattern rather than mocking modules.
+- **UI:**
+  - `Overlay._reanchor` keeps Pette fixed on screen while the bubble resizes. Change bubble content only through `Overlay` methods.
+  - `ANIMATIONS` in `sprites.py` maps state names to sheet frames. The frame order is a contract with `tools/prep_sprites.py`.
+  - Never load the raw `images/pette-spritesheet.png`, because it has an opaque checkerboard baked in.
+- **IDE bridge:** the VS Code extension and `context.read_active_file` share the JSON schema `{path, language, content, selection, line, updatedAt}` at `~/.flowstate_current.json`, overridden by `FLOWSTATE_ACTIVE_FILE`. Keep both sides in sync.
 
-- **Approval is single-use and bound to the proposal id.** `Bubble._consume()` clears the proposal and disables the buttons. Anything that executes an action must be triggered by `approved(id)`, never by a gesture or a timer.
-- **Pause clears the pending proposal and blocks new bubbles.** `propose()` and `say()` return early while paused, and callers should also drop late async results themselves, as `main.ask` does.
-- `Overlay._reanchor` keeps the pet fixed on screen while the bubble grows upward. Change bubble content only through it.
-- `images/pette-spritesheet.png` has an opaque checkerboard baked in. Use the processed `assets/pette_sheet.png`, never the raw image, in the app.
-- The tray icon is built from `sprites.frames[0]`. `sys._MEIPASS` is already handled in `asset_path` for PyInstaller.
+## Conventions
 
-## Conventions from the specs
-
-- Windows 11 first. Python 3.10+, PySide6 UI.
-- LLM calls: one request at a time, rate-capped, strict JSON validated before display, and the action allowlist is `none`, `copy_text`, `open_url` (HTTPS only). Screenshots and model replies are untrusted data.
-- Never persist keys, screenshots or camera data, and never log them.
-- Don't label simulated detections or demo output as real.
+- Windows 11 first; PySide6 for UI and screen capture (not `mss`).
+- Screenshot, audio and file contents stay in memory, and `Pipeline._reset()` drops the context after each request. Never persist or log them, or API keys.
+- Screen text, file text and model output are untrusted. The model can only choose among the allowlisted platforms. It never chooses URLs, commands or arbitrary mentions.
