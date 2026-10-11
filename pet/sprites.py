@@ -11,6 +11,7 @@ IDLE_A, LOOK, HAPPY, TYPING, WAVE, IDLE_B = range(6)
 
 ANIMATIONS = {
     "idle": [IDLE_A, IDLE_A, IDLE_B, IDLE_A, TYPING, IDLE_A],
+    "listening": [LOOK, IDLE_A],
     "thinking": [TYPING, LOOK, TYPING, IDLE_B],
     "speaking": [HAPPY, IDLE_A, HAPPY, WAVE],
     "sleeping": [HAPPY],

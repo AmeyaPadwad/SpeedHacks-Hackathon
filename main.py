@@ -1,37 +1,36 @@
-"""Pette overlay entry point. Demo wiring only: the proposal below is canned, not AI output."""
+"""FlowState entry point: tray + floating Pette overlay + global hotkey pipeline."""
+import argparse
+import os
 import sys
 
-from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-from pet.ui import Overlay, Proposal
-
-
-def demo_proposal() -> Proposal:
-    return Proposal(
-        title="DEMO: Slack draft to Sarah",
-        body="Hey Sarah, could you review my changes to the auth middleware when you get a chance? Thanks!",
-        action_label="Send",
-    )
+from pet import voice
+from pet.pipeline import Pipeline
+from pet.ui import Overlay
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="FlowState voice agent")
+    ap.add_argument("--no-voice", action="store_true", help="type commands instead of speaking them")
+    args = ap.parse_args()
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     overlay = Overlay()
+    pipeline = Pipeline(overlay, use_voice=not args.no_voice)
 
-    def ask():
-        overlay.set_state("thinking")
-        overlay.say("Thinking...", seconds=None)
-        overlay.set_state("thinking")
-        QTimer.singleShot(1200, lambda: None if overlay.paused else overlay.propose(demo_proposal()))
+    hotkey_ok = voice.register_hotkey(pipeline.hotkey_pressed.emit)
+    app.aboutToQuit.connect(voice.unregister_hotkeys)
 
-    overlay.ask_requested.connect(ask)
-    overlay.approved.connect(lambda _: overlay.say("Demo only: nothing was sent.", seconds=4))
-    overlay.cancelled.connect(lambda _: overlay.say("Cancelled. Nothing sent.", seconds=3))
     overlay.place_default()
     overlay.show()
-    overlay.say("Hi! Click me to ask.", seconds=5)
+    if not os.environ.get("OPENAI_API_KEY"):
+        overlay.say("OPENAI_API_KEY isn't set, so I can't draft anything yet.", title="Setup needed", seconds=10)
+    elif hotkey_ok:
+        overlay.say(f"Press {voice.HOTKEY.title()} or click me, then speak.", seconds=6)
+    else:
+        overlay.say("Global hotkey unavailable. Click me to ask.", seconds=6)
     return app.exec()
 
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSystemTrayIcon,
+    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon,
     QVBoxLayout, QWidget,
 )
 
@@ -97,9 +97,11 @@ class PetWidget(QWidget):
 
 
 class Bubble(QFrame):
-    """Speech bubble: message text, plus action/Cancel buttons when a proposal is pending."""
+    """Speech bubble: message text, action/Cancel buttons for a proposal, or a typed-command field."""
     approved = Signal(str)
     cancelled = Signal(str)
+    submitted = Signal(str)
+    input_cancelled = Signal()
 
     def __init__(self):
         super().__init__()
@@ -116,9 +118,14 @@ class Bubble(QFrame):
             QPushButton#primary {{ background: {INK}; color: {MINT}; font-weight: 600; }}
             QPushButton#primary:hover {{ background: #333; }}
             QPushButton:disabled {{ background: #D8D2C4; color: #8A8A8A; border-color: #8A8A8A; }}
+            QLineEdit {{ font-family: 'Segoe UI'; font-size: 11pt; padding: 5px 8px; border-radius: 8px;
+                        border: 1px solid {INK}; background: white; color: {INK}; }}
         """)
         self.title = QLabel(objectName="title")
         self.body = QLabel(objectName="body", wordWrap=True, textInteractionFlags=Qt.TextSelectableByMouse)
+        self.input = QLineEdit()
+        self.input.returnPressed.connect(self._submit)
+        self.input.hide()
         self.primary = QPushButton(objectName="primary")
         self.cancel = QPushButton("Cancel")
         row = QHBoxLayout()
@@ -131,22 +138,42 @@ class Bubble(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 10, 14, 12)
         lay.setSpacing(6)
-        for w in (self.title, self.body, self.buttons):
+        for w in (self.title, self.body, self.input, self.buttons):
             lay.addWidget(w)
         self.proposal: Proposal | None = None
+        self.asking = False
         self.primary.clicked.connect(self._approve)
         self.cancel.clicked.connect(self._cancel)
 
     def show_text(self, text: str, title: str = ""):
         self.proposal = None
+        self.asking = False
         self.title.setText(title)
         self.title.setVisible(bool(title))
         self.body.setText(text)
+        self.input.hide()
         self.buttons.hide()
         self.show()
 
+    def show_input(self, prompt: str):
+        self.proposal = None
+        self.asking = True
+        self.title.hide()
+        self.body.setText(prompt)
+        self.input.clear()
+        self.input.setPlaceholderText("e.g. Slack Sarah asking her to review this file")
+        self.input.show()
+        self.primary.setText("Go")
+        self.primary.setEnabled(True)
+        self.cancel.setEnabled(True)
+        self.buttons.show()
+        self.show()
+        self.input.setFocus()
+
     def show_proposal(self, p: Proposal):
         self.proposal = p
+        self.asking = False
+        self.input.hide()
         self.title.setText(p.title)
         self.title.show()
         self.body.setText(p.body)
@@ -163,12 +190,25 @@ class Bubble(QFrame):
         self.cancel.setEnabled(False)
         return p.id if p else None
 
+    def _submit(self):
+        text = self.input.text().strip()
+        if self.asking and text:
+            self.asking = False
+            self.input.hide()
+            self.submitted.emit(text)
+
     def _approve(self):
-        if (pid := self._consume()) is not None:
+        if self.asking:
+            self._submit()
+        elif (pid := self._consume()) is not None:
             self.approved.emit(pid)
 
     def _cancel(self):
-        if (pid := self._consume()) is not None:
+        if self.asking:
+            self.asking = False
+            self.input.hide()
+            self.input_cancelled.emit()
+        elif (pid := self._consume()) is not None:
             self.cancelled.emit(pid)
 
 
@@ -178,6 +218,8 @@ class Overlay(QWidget):
     cancelled = Signal(str)
     ask_requested = Signal()
     pause_toggled = Signal(bool)
+    text_submitted = Signal(str)
+    input_cancelled = Signal()
 
     def __init__(self, sheet: SpriteSheet | None = None, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -194,6 +236,8 @@ class Overlay(QWidget):
         self.paused = False
         self.bubble.approved.connect(self._decided(self.approved))
         self.bubble.cancelled.connect(self._decided(self.cancelled))
+        self.bubble.submitted.connect(self.text_submitted)
+        self.bubble.input_cancelled.connect(self._on_input_cancelled)
         self.pet.clicked.connect(self._on_pet_click)
         self._hide_timer = QTimer(self, singleShot=True, timeout=self.dismiss)
         self._pause_action = None
@@ -217,9 +261,21 @@ class Overlay(QWidget):
         self.set_state("speaking")
         self._arm_hide(None)  # a pending approval never times out silently
 
+    def ask_text(self, prompt: str):
+        """Typed-command fallback; the window takes focus so the user can type."""
+        if self.paused:
+            return
+        self._reanchor(lambda: self.bubble.show_input(prompt))
+        self.set_state("idle")
+        self._arm_hide(None)
+        self.activateWindow()
+        self.raise_()
+        self.bubble.input.setFocus()
+
     def dismiss(self):
         self._hide_timer.stop()
         self.bubble.proposal = None
+        self.bubble.asking = False
         self._reanchor(self.bubble.hide)
         self.set_state("idle")
 
@@ -249,9 +305,13 @@ class Overlay(QWidget):
             self.set_state("idle")
         return handler
 
+    def _on_input_cancelled(self):
+        self.input_cancelled.emit()
+        self.dismiss()
+
     def _on_pet_click(self):
         if self.bubble.isVisible():
-            if not self.bubble.proposal:
+            if not (self.bubble.proposal or self.bubble.asking):
                 self.dismiss()
         elif not self.paused:
             self.ask_requested.emit()
