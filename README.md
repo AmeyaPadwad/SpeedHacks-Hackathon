@@ -16,7 +16,7 @@ Developers and knowledge workers lose their "flow state" every time they have to
 
 ## The Architecture & Execution Plan
 
-### 1. Project Structure & Environment
+### 1. Project Structure
 *   **Language:** Python 3.10+
 *   **Dependencies:** `keyboard`, `speech_recognition`, `mss`, `PySide6`, `openai`, `requests`
 
@@ -29,18 +29,19 @@ Developers and knowledge workers lose their "flow state" every time they have to
 *   **Visual Context:** Uses `mss` to instantly grab a screenshot of the primary monitor.
 *   **File Context (The VS Code Extension approach):** A lightweight companion VS Code extension constantly writes the active file's path and contents to a temporary local file (e.g., `~/.flowstate_current.txt`). The Python background app reads this file when the hotkey is pressed to get the exact code context.
 
-### 4. Module 3: AI Brain (The Router)
-*   Sends a prompt to `gpt-4o`.
+### 4. Module 3: AI Brain & Darwin Search
+*   **Intent Extraction:** Sends a prompt to `gpt-4o-mini`.
 *   **Inputs:** Base64 screenshot + Active file text + Transcribed voice command.
-*   **Prompt Instruction:** Understand the context from the screen/code, determine the platform and recipient based on the voice command, and output a strict JSON draft message.
+*   **Prompt Instruction:** Understand the context and output a clean, plain-text summary of the task (e.g., "Create a Jira ticket titled 'Database Timeout Error'. Context: ...").
+*   **Agent Discovery:** Passes the clean task string to the **Darwin Search API** (`POST /api/v3/search`) to dynamically find the best agent for the job, rather than relying on hardcoded API integrations.
 
 ### 5. Module 4: Floating UI (Confirmation)
 *   Uses `PySide6` (or `Tkinter`) to spawn a borderless, always-on-top window in the center of the screen.
-*   Displays the drafted message and recipient with **[ Send ]** and **[ Cancel ]** buttons to ensure safety before dispatching.
+*   Displays the user's task, the Agent selected by Darwin (e.g., "Jira Automator"), and **[ Approve ]** / **[ Cancel ]** buttons to ensure safety before dispatching.
 
-### 6. Module 5: Dispatch Connectors
-*   Simple API wrappers to dispatch the approved message.
-*   Uses Slack Webhooks, Discord Webhooks, or basic SMTP/Gmail integrations for the demo.
+### 6. Module 5: Dispatch (Darwin Act API)
+*   When the user approves, the app calls the **Darwin Act API** (`POST /api/v3/act`).
+*   It passes the `searchId` and `agentId` to start a thread with the selected agent, completely offloading the execution of the task (Slack, Jira, Gmail, etc.) to the Darwin network.
 
 ### 7. Integration & Main Loop
 *   Ties everything together in a single `main.py` entry point that initializes the listener and orchestrates the Context -> Voice -> AI -> UI -> Dispatch pipeline.
