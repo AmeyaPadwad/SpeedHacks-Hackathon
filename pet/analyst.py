@@ -96,6 +96,13 @@ def local_analysis(ctx: Context, why: str) -> Analysis:
                     conf, f"local CV + diagnostics only ({why})")
 
 
+class LocalAnalyst:
+    """Demo mode: never calls the cloud; analysis comes from screen CV + diagnostics only."""
+
+    def analyze(self, ctx: Context) -> Analysis:
+        return local_analysis(ctx, "demo mode")
+
+
 class Analyst:
     def __init__(self, client=None, model: str | None = None):
         self._client = client

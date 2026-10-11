@@ -75,7 +75,7 @@ def build_prompt(t: AgentTask, image_path: str | None = None) -> str:
         lines += ["", "Code excerpt (line numbers on the left):", t.excerpt]
     lines += [
         "",
-        "Reply with:",
+        "Answer directly in plain text (don't write a plan file). Reply with:",
         "1. Root cause (confirm or correct the hypothesis, citing code).",
         "2. A minimal fix as a unified diff.",
         "3. A test or check that proves the fix.",
