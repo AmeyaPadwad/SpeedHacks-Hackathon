@@ -35,6 +35,24 @@ Pette also *watches for blockers* and hands them to your coding agent (Claude Co
    - **Pinch (thumb and index finger):** opens Pette or dismisses a message. A gesture never approves or cancels anything.
    - **Privacy:** a mint dot shows whenever the camera is on. Frames and landmarks never leave the camera thread and are never stored or uploaded. These signals are heuristics, not gaze or emotion detection.
 
+### Webcam signals → faster messaging
+| Signal | In the message workflow |
+|---|---|
+| **Pinch** (idle) | Push-to-talk: Pette opens and starts listening, with no hotkey needed |
+| **Pinch** on a draft | Throw it away and dictate again (*"no wait, say it differently"*). A gesture never sends anything; only a click does |
+| **Pinch** on a plain message | Dismiss it |
+| **Away → back** | Drafts wait while you're away. When you return the bubble asks *"Still send?"* and Pette wakes up |
+| **Eyes closed** | Pette mirrors you. Proactive offers wait until your eyes are open |
+
+### Memory: `db/` cache and world model
+Pette keeps a small local SQLite cache in `db/pette_cache.sqlite3` (gitignored, 30-day retention) and learns from it:
+- **Usual platform per contact:** "message Sarah …" goes to the platform you usually send her on. The title says "(usual)", and a platform you name always wins. Frequent contacts are also listed in the GPT prompt.
+- **Eyes-closed calibration:** the threshold follows your open-eye baseline (0.5–0.85).
+- **Offer back-off:** if you decline most proactive offers, you get fewer of them.
+- **Presence stats:** away episodes, eye closures and pinches.
+
+It stores facts only (event names, timestamps, recipient and platform, approve/cancel outcomes), never message text, screenshots, frames or code. Use **What Pette learned**, **Remember my patterns** and **Clear Pette memory** in the tray. Details are in [db/README.md](db/README.md).
+
 Try it on the included fixture: open `fixtures/buggy_app/dashboard.py` in VS Code (with the extension), run its tests so the error shows, then press `Ctrl+Alt+Space`.
 
 ## Quick start (Windows 11, Python 3.10+)
@@ -132,11 +150,19 @@ py -m pip install Pillow numpy
 py tools/prep_sprites.py                # rebuild assets/pette_sheet.png from images/pette-spritesheet.png
 ```
 
-The tests use fake clients, so they need no API keys, mic or network.
+The tests use fake clients, so they need no API keys, mic or network. `tests/test_e2e.py` runs a full session (messages, focus gate, webcam events, proactive investigation, agent, pause, memory) and launches the real `main.py`.
+
+```powershell
+py tools/run_checks.py               # tests + live system checks + UI screenshots -> test_results/REPORT.md
+py tools/run_checks.py --webhooks    # also post a labelled test message to Slack/Discord
+py tools/cv_check.py                 # live webcam signal checker
+```
+
+Latest results: [test_results/REPORT.md](test_results/REPORT.md).
 
 ## Status
 - **Checked:**
-  - 78 unit tests covering message and agent flows, the screen-CV locator on synthetic IDE frames, the webcam debounce policy, the intervention policy, and the Claude Code and Hermes argument lists.
+  - 114 tests, plus live system checks: see [test_results/REPORT.md](test_results/REPORT.md).
   - Live Slack and Discord webhook posts.
   - A live Claude Code read-only investigation of `fixtures/buggy_app`: correct root cause and a diff, with no files modified.
   - The camera opens and MediaPipe runs on Windows 11 with Python 3.13.

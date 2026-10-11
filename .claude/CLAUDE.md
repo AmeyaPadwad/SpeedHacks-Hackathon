@@ -60,6 +60,14 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
   - `classify()` returns None (neutral) for Pette's own process and for taskbar/tray window classes. Otherwise clicking Pette or the tray would hide her.
   - After a temporary hide, use `Overlay.reveal()`, never `show()`, so the gate isn't overridden.
   - `Pipeline._can_start()` blocks hotkeys and offers while hidden. The watcher treats hidden as busy, so offers are deferred, not lost.
+- **Gestures in the message flow:** `Overlay.pinch()` does three things. Idle: push-to-talk. A plain message is showing: dismiss it. A proposal is pending: emit `pinch_on_proposal`, and `Pipeline._pinch_on_proposal` re-dictates only if that proposal is a message `Draft`.
+  - A gesture must never approve or send.
+  - `Overlay.nudge()` re-titles a pending proposal "Still …?" when you return from being away.
+- **Memory** (`db/`): `Store` is a thread-safe SQLite fact log, and `WorldModel` holds small explainable rules over it.
+  - Only pass facts in: never message text, screenshots, frames or code. `tests/test_db.py` checks the schema for content columns.
+  - `Pipeline` and `Watcher` take an optional `memory=` and `world=`. Keep them optional so tests and features run without a db.
+  - Webcam events are ignored and not logged while paused.
+- **Checks:** `py tools/run_checks.py` regenerates `test_results/` (REPORT.md, junit.xml, ui_states.png). Re-run it and commit the results after significant changes.
 - MediaPipe models live in `models/*.task` (gitignored) and are downloaded with `py tools/get_models.py`. `fixtures/buggy_app` is a deliberate bug for demos and is excluded from pytest by `pytest.ini`.
 
 ## Conventions
