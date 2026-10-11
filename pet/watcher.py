@@ -1,10 +1,10 @@
-"""Context/state engine: fuses IDE diagnostics, local screen CV and webcam presence to decide
+"""Context/state engine: fuses IDE diagnostics and webcam presence to decide
 when (rarely) to offer help, and drives Pette's presence reactions.
 
 Interruption policy (VISUAL_CODING_COMPANION.md): offer only on persistent, strong evidence;
 dedupe by issue fingerprint; per-issue cooldown; daily cap; never while the user is away,
-has their eyes closed, or is mid-interaction. An offer is just a question; nothing is captured
-for the cloud or sent to an agent until the user approves.
+has their eyes closed, or is mid-interaction. An offer is just a question; nothing is uploaded
+or sent to an agent until the user approves.
 """
 import time
 from dataclasses import dataclass
@@ -22,7 +22,6 @@ class Signals:
     t: float
     diag_fingerprint: str | None       # active file + first error, from the VS Code bridge
     diag_summary: str
-    screen_fingerprint: str | None     # local CV error regions (only when screen watching is on)
     user_present: bool = True
     eyes_closed: bool = False
     busy: bool = False
@@ -30,7 +29,6 @@ class Signals:
 
 class InterventionPolicy:
     DIAG_PERSIST_S = 20        # an IDE error must survive this long (not just mid-typing)
-    SCREEN_PERSIST_S = 45      # screen-only evidence is weaker, so wait longer
     COOLDOWN_S = 10 * 60       # per issue, after any offer
     DAILY_CAP = 8
 
@@ -44,9 +42,6 @@ class InterventionPolicy:
         candidates = []
         if s.diag_fingerprint:
             candidates.append(("diag:" + s.diag_fingerprint, self.DIAG_PERSIST_S, s.diag_summary))
-        if s.screen_fingerprint:
-            candidates.append(("screen:" + s.screen_fingerprint, self.SCREEN_PERSIST_S,
-                               "Error-coloured text has stayed on screen for a while."))
         live = {fp for fp, _, _ in candidates}
         self._first_seen = {fp: t for fp, t in self._first_seen.items() if fp in live}  # resolved issues reset
 
@@ -82,20 +77,18 @@ class Watcher(QObject):
     offer = Signal(str)            # reason text; the pipeline turns it into an approval bubble
     camera_status = Signal(str)
 
-    def __init__(self, overlay, is_busy, *, read_file=context.read_active_file, grab_findings=None,
+    def __init__(self, overlay, is_busy, *, read_file=context.read_active_file,
                  memory=None, world=None, clock=time.monotonic):
         super().__init__()
         self.overlay = overlay
         self._is_busy = is_busy
         self._read_file = read_file
-        self._grab_findings = grab_findings or _grab_findings
         self.memory, self.world = memory, world   # db.Store / db.WorldModel, optional
         self._clock = clock
         self._away_since: float | None = None
         self._closed_since: float | None = None
         self.policy = InterventionPolicy()
         self.proactive = True
-        self.watch_screen = False
         self.present, self.eyes_closed = True, False
         self.camera: CameraWorker | None = None
         self._timer = QTimer(self, interval=POLL_S * 1000, timeout=self.poll)
@@ -172,33 +165,9 @@ class Watcher(QObject):
         if self.world:  # learned back-off: fewer offers if you usually decline them
             self.policy.COOLDOWN_S = self.world.offer_cooldown_s(InterventionPolicy.COOLDOWN_S)
         fp, summary = diag_signal(self._read_file())
-        screen_fp = None
-        if self.watch_screen and self.present and not self.overlay.isHidden():
-            findings = self._grab_findings(self.overlay)
-            screen_fp = findings.fingerprint() if findings and findings.has_errors else None
         # Outside VS Code / terminals counts as busy, so the offer is deferred rather than lost.
         busy = self._is_busy() or self.overlay.bubble.isVisible() or not self.overlay.context_allowed
-        hit = self.policy.update(Signals(time.time(), fp, summary, screen_fp, self.present, self.eyes_closed, busy))
+        hit = self.policy.update(Signals(time.time(), fp, summary, self.present, self.eyes_closed, busy))
         if hit:
             self.offer.emit(hit[1])
 
-
-def _grab_findings(overlay):
-    """Local-only screen CV for watching: the frame is analysed and dropped, never uploaded or stored."""
-    from PySide6.QtGui import QGuiApplication
-    screen = QGuiApplication.primaryScreen()
-    if screen is None:
-        return None
-    pm = screen.grabWindow(0)
-    if pm.isNull():
-        return None
-    findings = context.find_errors(pm, screen)
-    if findings is not None:
-        g, r = overlay.frameGeometry(), pm.devicePixelRatio() or 1
-        sg = screen.geometry()
-        ox, oy = int((g.x() - sg.x()) * r), int((g.y() - sg.y()) * r)
-        ow, oh = int(g.width() * r), int(g.height() * r)
-        # Drop regions that overlap Pette itself (pink ears, bubble text).
-        findings.regions = [x for x in findings.regions
-                            if not (x.x < ox + ow and x.x + x.w > ox and x.y < oy + oh and x.y + x.h > oy)]
-    return findings

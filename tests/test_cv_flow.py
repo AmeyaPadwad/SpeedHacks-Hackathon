@@ -5,14 +5,12 @@ from pet.analyst import Analysis
 from pet.brain import Draft, OfflineBrain
 from pet.context import ActiveFile, Context, Diagnostic
 from pet.pipeline import Pipeline
-from pet.screen_cv import Region, ScreenFindings
 from pet.ui import Overlay
 from pet.vision import EYES_CLOSED, FACE_AWAY, FACE_BACK, PINCH
 from pet.watcher import InterventionPolicy, Signals, Watcher, diag_signal
 
 ERR = Diagnostic(12, "error", "'NoneType' object is not subscriptable", "pytest")
 AF = ActiveFile("C:/repo/dashboard.py", "python", "x = 1\n" * 30, workspace="C:/repo", diagnostics=(ERR,))
-SCREEN = ScreenFindings([Region(5, 5, 120, 14, 90)], 0.001, b"\xff\xd8crop", 1920, 1080)
 ANALYSIS = Analysis("Crash on unknown user", ("line 12 error",), "user is None", "guard None", 0.8, "ai")
 
 
@@ -42,9 +40,14 @@ def make(qapp, monkeypatch):
 
     def build(agent=None, brain=None):
         o = Overlay(tray=False)
-        out = {"copied": [], "shown": []}
+        out = {"copied": [], "shown": [], "captures": 0}
         agent = agent or FakeAgent()
-        p = Pipeline(o, brain or OfflineBrain(), capture=lambda: Context(b"jpg", AF, SCREEN),
+
+        def capture():
+            out["captures"] += 1
+            return Context(b"jpg", AF)
+
+        p = Pipeline(o, brain or OfflineBrain(), capture=capture, read_file=lambda: AF,
                      analyst=FakeAnalyst(), pick_agent=lambda name=None: agent,
                      copy_text=out["copied"].append, show_result=lambda t, x: out["shown"].append((t, x)),
                      use_voice=False, spawn=lambda f: f(), capture_delay_ms=0)
@@ -56,12 +59,13 @@ def test_investigate_requires_approval_then_runs_agent(make):
     o, p, agent, out = make()
     p.investigate()
     ctx = p.analyst.calls[0]
-    assert ctx.screen is SCREEN and ctx.active_file is AF          # CV findings + diagnostics reach analysis
+    assert ctx.active_file is AF and ctx.screenshot_jpeg is None   # the file, never a screenshot
+    assert out["captures"] == 0
     assert o.bubble.proposal.action_label == "Ask Claude Code" and agent.tasks == []
     assert "80% confident" in o.bubble.proposal.title
     o.bubble.primary.click()
     task = agent.tasks[0]
-    assert task.screen_crop == b"\xff\xd8crop" and task.workspace == "C:/repo"
+    assert task.file_path == AF.path and task.workspace == "C:/repo" and "x = 1" in task.file_text
     assert out["shown"][0][1].startswith("diff --git") and "Nothing was changed" in o.bubble.body.text()
     o.bubble.primary.click()
     assert len(agent.tasks) == 1                                     # single-use approval
@@ -103,8 +107,9 @@ def test_proactive_offer_asks_before_capturing(make):
     o, p, agent, out = make()
     p.offer_investigation("dashboard.py line 12: NoneType")
     assert p.analyst.calls == [] and o.bubble.proposal.action_label == "Investigate"
-    o.bubble.primary.click()                                         # approve offer -> capture + analyse
+    o.bubble.primary.click()                                         # approve offer -> read file + analyse
     assert len(p.analyst.calls) == 1 and o.bubble.proposal.action_label == "Ask Claude Code"
+    assert out["captures"] == 0
 
 
 def test_pause_during_agent_run_drops_result(make):
@@ -120,8 +125,8 @@ def test_pause_during_agent_run_drops_result(make):
 
 # --- intervention policy -------------------------------------------------
 
-def sig(t, diag="f|err", screen=None, **kw):
-    return Signals(t, diag, "summary", screen, **kw)
+def sig(t, diag="f|err", **kw):
+    return Signals(t, diag, "summary", **kw)
 
 
 def test_policy_needs_persistence_then_cools_down():
@@ -144,11 +149,7 @@ def test_policy_resets_when_issue_resolves_and_defers_when_away():
     assert pol.update(sig(49)) is not None                       # offered once the user is back
 
 
-def test_policy_screen_only_waits_longer_and_daily_cap():
-    pol = InterventionPolicy()
-    pol.update(sig(0, diag=None, screen="3:4"))
-    assert pol.update(sig(30, diag=None, screen="3:4")) is None
-    assert pol.update(sig(46, diag=None, screen="3:4"))[0] == "screen:3:4"
+def test_policy_daily_cap():
     pol = InterventionPolicy()
     hits = 0
     for i in range(20):

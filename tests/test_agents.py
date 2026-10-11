@@ -8,16 +8,15 @@ from pet import agents
 from pet.agents import AgentError, AgentTask, ClaudeCodeAgent, HermesAgent, build_prompt, pick_agent
 from pet.analyst import Analyst, local_analysis, parse_analysis
 from pet.context import ActiveFile, Context, Diagnostic
-from pet.screen_cv import Region, ScreenFindings
 
 CODE = "\n".join(f"line{i}" for i in range(1, 101))
 ERR = Diagnostic(50, "error", "x is undefined", "Pylance")
 
 
-def ctx(errors=True, crop=b"\xff\xd8crop"):
-    af = ActiveFile("C:/repo/app.py", "python", CODE, workspace="C:/repo", diagnostics=(ERR,) if errors else ())
-    screen = ScreenFindings([Region(10, 10, 100, 12, 80)], 0.001, crop, 1920, 1080)
-    return Context(b"\xff\xd8full", af, screen)
+def ctx(errors=True):
+    af = ActiveFile("C:/repo/app.py", "python", CODE, selection="line50", workspace="C:/repo",
+                    diagnostics=(ERR,) if errors else ())
+    return Context(b"\xff\xd8full", af)
 
 
 def ai_json(**over):
@@ -42,11 +41,11 @@ def test_parse_analysis_rejects(raw):
 def test_analyst_falls_back_to_labelled_local(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     a = Analyst().analyze(ctx())
-    assert a.source.startswith("local CV + diagnostics only") and "OPENAI_API_KEY" in a.source
-    assert "line 50" in a.observation and any("error-coloured" in e for e in a.evidence)
+    assert a.source.startswith("diagnostics only") and "OPENAI_API_KEY" in a.source
+    assert "line 50" in a.observation and any("x is undefined" in e for e in a.evidence)
 
 
-def test_analyst_sends_crop_and_diagnostics():
+def test_analyst_sends_file_text_only_no_images():
     seen = {}
 
     def create(**kw):
@@ -55,23 +54,29 @@ def test_analyst_sends_crop_and_diagnostics():
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     a = Analyst(client).analyze(ctx())
-    parts = seen["messages"][1]["content"]
-    assert a.source == "ai"
-    assert "x is undefined" in parts[0]["text"] and "   50  line50" in parts[0]["text"]
-    assert [p["image_url"]["detail"] for p in parts[1:]] == ["high", "low"]
+    text = seen["messages"][1]["content"]
+    assert a.source == "ai" and isinstance(text, str)   # text only: the screenshot is never sent
+    assert "x is undefined" in text and "   50  line50" in text and "Selected text" in text
 
 
 def test_local_analysis_without_anything():
     a = local_analysis(Context(None, None), "demo")
-    assert a.confidence <= 0.1 and "demo" in a.source
+    assert a.confidence <= 0.1 and "demo" in a.source and "VS Code" in a.observation
 
 
-def test_prompt_is_propose_only_and_grounded():
+def test_prompt_is_propose_only_and_carries_the_whole_file():
     t = AgentTask.from_context(local_analysis(ctx(), "x"), ctx())
-    p = build_prompt(t, "C:/tmp/error_region.jpg")
+    p = build_prompt(t)
     assert "DO NOT modify files" in p and "unified diff" in p
-    assert "C:/repo/app.py" in p and "x is undefined" in p and "error_region.jpg" in p
-    assert t.workspace == "C:/repo"
+    assert "C:/repo/app.py" in p and "x is undefined" in p
+    assert "    1  line1" in p and "  100  line100" in p      # full file, not an excerpt
+    assert "Developer's selection" in p and t.workspace == "C:/repo"
+
+
+def test_large_file_truncates_file_not_instructions():
+    big = Context(None, ActiveFile("C:/repo/big.py", "python", "x = 1\n" * 20_000, workspace="C:/repo"))
+    p = build_prompt(AgentTask.from_context(local_analysis(big, "x"), big))
+    assert len(p) <= agents.MAX_PROMPT_CHARS and "unified diff" in p and "DO NOT modify" in p
 
 
 class FakeRun:
@@ -83,7 +88,7 @@ class FakeRun:
         return self.result
 
 
-def test_claude_adapter_is_read_only_and_cleans_up(monkeypatch, tmp_path):
+def test_claude_adapter_is_read_only(monkeypatch):
     run = FakeRun()
     monkeypatch.setattr(agents.shutil, "which", lambda exe: f"C:/bin/{exe}.exe")
     monkeypatch.setattr(agents.subprocess, "run", run)
@@ -94,10 +99,8 @@ def test_claude_adapter_is_read_only_and_cleans_up(monkeypatch, tmp_path):
     assert args[args.index("--permission-mode") + 1] == "plan"
     assert args[args.index("--tools") + 1] == "Read,Grep,Glob"
     assert "bypassPermissions" not in args and "--dangerously-skip-permissions" not in args
-    img_dir = args[args.index("--add-dir") + 1]
-    assert "error_region.jpg" in kw["input"]
-    import os
-    assert not os.path.exists(img_dir)          # temp crop removed after the run
+    assert "--add-dir" not in args
+    assert "x is undefined" in kw["input"] and "  100  line100" in kw["input"]   # the file goes on stdin
 
 
 def test_hermes_adapter_planning_toolset_only(monkeypatch):
@@ -108,6 +111,7 @@ def test_hermes_adapter_planning_toolset_only(monkeypatch):
     args = run.calls[0][0]
     assert args[1] == "-z" and args[args.index("-t") + 1] == "todo"
     assert "--yolo" not in args
+    assert "  100  line100" in args[2]   # Hermes has no file tools, so the file is inline
 
 
 def test_cli_failures_raise_agent_error(monkeypatch):

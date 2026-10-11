@@ -46,16 +46,16 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
   - Never load the raw `images/pette-spritesheet.png`, because it has an opaque checkerboard baked in.
 - **IDE bridge:** the VS Code extension and `context.read_active_file` share the JSON schema `{path, workspace, language, content, selection, line, diagnostics[{line, severity, message, source, code}], updatedAt}` at `~/.flowstate_current.json`, overridden by `FLOWSTATE_ACTIVE_FILE`. Keep both sides in sync.
 
-### CV → coding agents
-- **Screen CV:** `context.capture()` returns a `Context(screenshot_jpeg, active_file, screen)`, where `screen` holds the `screen_cv.ScreenFindings` for the same frame. `screen_cv` is a red-hue locator, not OCR. Its shape and density filters (`MIN_ASPECT`, `MAX_DENSITY`) were tuned against false positives from real UI, so re-check on a real screen after changing them.
-- **Investigate flow** (`Pipeline.investigate`, the `agent` brain platform, or an approved `offer_investigation`): `_capture_then`, then `analyst.analyze`, then a proposal, then `_run_agent` on approval. `pending` values are a `Draft`, an `AgentTask` or the `OFFER` marker. `_approved` dispatches on type.
+### Active file → coding agents
+- **No screen CV.** The red-hue screen locator was removed on purpose; don't bring it back. `context.capture()` returns `Context(screenshot_jpeg, active_file)` and is used only by the message flow. The screenshot is never sent to the analyst or an agent.
+- **Investigate flow** (`Pipeline.investigate`, the `agent` brain platform, or an approved `offer_investigation`): `read_file()` (no screenshot; the `agent` route reuses the hotkey-time context), then `analyst.analyze` (text only), then a proposal, then `_run_agent` on approval. `AgentTask.file_text` carries the whole line-numbered file, placed last in the prompt so truncation never cuts the instructions. `pending` values are a `Draft`, an `AgentTask` or the `OFFER` marker. `_approved` dispatches on type.
 - **Agents** (`pet/agents.py`) are propose-only by construction:
   - Claude Code runs with `-p --permission-mode plan --tools Read,Grep,Glob` and the prompt on stdin.
   - Hermes runs with `-z ... -t todo`, because `-z` auto-approves tools.
   - Never add write or terminal tools, `--yolo`, or permission bypasses. `tests/test_agents.py` asserts the argument lists.
   - Only add an adapter after checking the CLI's real `--help`.
 - **Webcam:** `vision.VisionPolicy` holds the debounce rules as pure logic and is unit-tested. `CameraWorker` (a QThread) emits event names only, never frames or landmarks. `Watcher` owns the camera and the poll timer, and gates proactive offers on presence. Gestures call `Overlay.pinch()`, which must never approve or cancel a proposal.
-- **Proactive offers:** `watcher.InterventionPolicy` handles persistence, fingerprint dedupe, the cooldown and the daily cap, and it defers while the user is away, has eyes closed, or is busy. An offer only asks. The screen is captured only after the user approves.
+- **Proactive offers:** `watcher.InterventionPolicy` handles persistence, fingerprint dedupe, the cooldown and the daily cap, and it defers while the user is away, has eyes closed, or is busy. Offers come from IDE diagnostics only. An offer only asks. Nothing goes to the cloud or an agent until the user approves.
 - **Focus gate** (`pet/focus.py`): `Overlay.context_allowed` is False while the foreground app isn't VS Code or a terminal.
   - `classify()` returns None (neutral) for Pette's own process and for taskbar/tray window classes. Otherwise clicking Pette or the tray would hide her.
   - After a temporary hide, use `Overlay.reveal()`, never `show()`, so the gate isn't overridden.

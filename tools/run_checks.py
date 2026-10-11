@@ -144,17 +144,6 @@ def focus_check():
            f"{'show Pette' if verdict else 'hide Pette' if verdict is False else 'neutral'}")
 
 
-@check("Screen CV on the real screen")
-def screen_check(app):
-    from pet.context import find_errors
-    screen = app.primaryScreen()
-    t = time.perf_counter()
-    f = find_errors(screen.grabWindow(0), screen)
-    ms = (time.perf_counter() - t) * 1000
-    record("Screen CV on the real screen", "PASS",
-           f"{f.width}x{f.height}, {len(f.regions)} error-coloured region(s), {ms:.0f} ms (image discarded)")
-
-
 @check("VS Code bridge snapshot")
 def bridge_check():
     from pet.context import ACTIVE_FILE, read_active_file
@@ -209,7 +198,7 @@ def agent_check():
     before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in ws.glob("*.py")}
     af = ActiveFile(str(ws / "dashboard.py"), "python", (ws / "dashboard.py").read_text(), workspace=str(ws),
                     diagnostics=(Diagnostic(12, "error", "TypeError: 'NoneType' object is not subscriptable", "pytest"),))
-    ctx = Context(None, af, None)
+    ctx = Context(None, af)
     t = time.time()
     res = agent.run(AgentTask.from_context(local_analysis(ctx, "check"), ctx))
     after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in ws.glob("*.py")}
@@ -252,7 +241,6 @@ def ui_check(app):
     from pet.brain import OfflineBrain
     from pet.context import ActiveFile, Context, Diagnostic
     from pet.pipeline import Pipeline
-    from pet.screen_cv import Region, ScreenFindings
     from pet.ui import Overlay
     from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
     from pet.watcher import Watcher
@@ -276,7 +264,7 @@ def ui_check(app):
 
     o = Overlay(tray=False)
     p = Pipeline(o, OfflineBrain(), analyst=LocalAnalyst(), use_voice=False, spawn=lambda f: f(), capture_delay_ms=0,
-                 capture=lambda: Context(None, af, ScreenFindings([Region(1, 1, 90, 12, 60)], 0.001, None, 10, 10)),
+                 capture=lambda: Context(None, af), read_file=lambda: af,
                  send=lambda d: f"Sent to {d.recipient} on {d.platform.title()}.", configured=lambda _: True,
                  pick_agent=lambda n=None: FakeAgent(), memory=store, world=world)
     w = Watcher(o, lambda: p.busy, read_file=lambda: None, memory=store, world=world)
@@ -395,7 +383,6 @@ def main() -> int:
     else:
         camera_check()
     focus_check()
-    screen_check(app)
     bridge_check()
     db_check()
     openai_check()

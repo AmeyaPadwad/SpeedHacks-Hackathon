@@ -50,12 +50,10 @@ def main() -> int:
                             checked=not args.always_show)
     gate.enabled = gate.enabled and not args.always_show
 
-    # --- tray: CV controls (camera off by default; screen watching off by default) ---
+    # --- tray: webcam + proactive controls (camera off by default) ---
     camera_action = overlay.add_menu_action("Camera: face, eyes, pinch (local)", watcher.set_camera, checkable=True)
     overlay.add_menu_action("Proactive help on IDE errors", lambda on: setattr(watcher, "proactive", on),
                             checkable=True, checked=True)
-    overlay.add_menu_action("Watch screen for errors (local CV)", lambda on: setattr(watcher, "watch_screen", on),
-                            checkable=True)
     group = QActionGroup(overlay)
     current = pipeline.agent.name
     for a in agents.AGENTS.values():
@@ -106,7 +104,7 @@ def main() -> int:
     gate.start()   # hides Pette right away if VS Code / a terminal isn't in front
     if args.camera and camera_action:
         camera_action.setChecked(True)
-    keys = f"{voice.HOTKEY.title()} to ask, {voice.INVESTIGATE_HOTKEY.title()} to investigate your screen."
+    keys = f"{voice.HOTKEY.title()} to ask, {voice.INVESTIGATE_HOTKEY.title()} to investigate the open file."
     if args.demo:
         overlay.say(f"Demo mode: no AI. {keys}", title=OfflineBrain.label, seconds=8)
     elif not os.environ.get("OPENAI_API_KEY"):

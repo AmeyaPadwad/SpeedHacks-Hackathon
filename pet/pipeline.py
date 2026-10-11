@@ -2,6 +2,7 @@
 
 Lives on the Qt main thread; slow steps run in threads and come back through `_deliver`.
 """
+import os
 import threading
 import time
 from dataclasses import replace
@@ -32,6 +33,7 @@ class Pipeline(QObject):
     investigate_hotkey = Signal()
 
     def __init__(self, overlay: Overlay, brain: Brain | None = None, *, capture=context.capture,
+                 read_file=context.read_active_file,
                  record=voice.record_until_silence, transcribe=voice.transcribe, send=dispatch.dispatch,
                  configured=dispatch.configured, analyst: Analyst | None = None, pick_agent=agents.pick_agent,
                  copy_text=None, show_result=None, use_voice=True, spawn=_thread,
@@ -43,6 +45,7 @@ class Pipeline(QObject):
         self.brain = brain or Brain()
         self.analyst = analyst or Analyst()
         self._capture, self._record, self._transcribe = capture, record, transcribe
+        self._read_file = read_file
         self._send, self._configured = send, configured
         self._pick_agent = pick_agent
         self._copy_text = copy_text or _clipboard
@@ -76,7 +79,7 @@ class Pipeline(QObject):
 
     # --- capture ----------------------------------------------------------
     def _capture_then(self, next_step):
-        """Hide Pette, take one screenshot (+ local screen CV), show Pette, continue on the main thread."""
+        """Message flow: hide Pette, take one screenshot + the active file, show Pette, continue."""
         self.busy = True
         gen = self.gen
         was_visible = self.overlay.isVisible()
@@ -162,18 +165,19 @@ class Pipeline(QObject):
         self.pending[p.id] = d
         self.overlay.propose(p)
 
-    # --- screen CV -> analysis -> coding agent ----------------------------
+    # --- active file -> analysis -> coding agent ---------------------------
     def investigate(self):
-        """Explicit request (tray/hotkey/approved offer): capture the screen and analyse it."""
+        """Explicit request (tray/hotkey/approved offer): analyse the active editor file. No screenshot."""
         if not self._can_start():
             return
-        self._capture_then(self._analyze)
+        self.ctx = context.Context(None, self._read_file())
+        self._analyze()
 
     def offer_investigation(self, reason: str):
-        """Proactive: ask first. Nothing is captured or uploaded unless the user clicks Investigate."""
+        """Proactive: ask first. Nothing is uploaded or sent to an agent unless the user clicks Investigate."""
         if not self._can_start() or self.overlay.bubble.isVisible():
             return
-        p = Proposal(title="Looks like you're stuck", body=f"{reason}\n\nWant me to look at your screen and "
+        p = Proposal(title="Looks like you're stuck", body=f"{reason}\n\nWant me to look at this file and "
                      f"prepare a task for {self.agent.label}?", action_label="Investigate")
         self.pending[p.id] = OFFER
         self._remember_offer("proactive", "shown")
@@ -182,9 +186,9 @@ class Pipeline(QObject):
     def _analyze(self, request: str = ""):
         self.busy = True
         ctx = self.ctx or context.Context(None, None)
-        n = len(ctx.screen.regions) if ctx.screen else 0
-        self.overlay.say(f"Looking at your screen... {n} error region(s) found locally." if ctx.screen
-                         else "Looking at your screen...", seconds=None)
+        af = ctx.active_file
+        self.overlay.say(f"Looking at {os.path.basename(af.path)}..." if af
+                         else "No active file from VS Code; analysing without one...", seconds=None)
         self.overlay.set_state("thinking")
         self._run(lambda: self.analyst.analyze(ctx), lambda a: self._analyzed(a, ctx, request), self._fail, BrainError)
 
@@ -192,7 +196,7 @@ class Pipeline(QObject):
         self._reset()
         agent = self.agent
         task = AgentTask.from_context(a, ctx, request)
-        tag = "" if a.source == "ai" else " · local CV only"
+        tag = "" if a.source == "ai" else " · diagnostics only"
         body = f"{a.summary()}\n\nNext: {a.next_step}"
         if a.source != "ai":
             body += f"\n\n({a.source})"

@@ -13,7 +13,6 @@ from pet.brain import OfflineBrain
 from pet.context import ActiveFile, Context, Diagnostic
 from pet.focus import DEFAULT_APPS, FocusGate
 from pet.pipeline import Pipeline
-from pet.screen_cv import Region, ScreenFindings
 from pet.ui import Overlay
 from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
 from pet.watcher import Watcher
@@ -22,7 +21,6 @@ ROOT = Path(__file__).resolve().parent.parent
 AF = ActiveFile(str(ROOT / "fixtures/buggy_app/dashboard.py"), "python", "x\n" * 20,
                 workspace=str(ROOT / "fixtures/buggy_app"),
                 diagnostics=(Diagnostic(12, "error", "TypeError: 'NoneType' object is not subscriptable", "pytest"),))
-SCREEN = ScreenFindings([Region(40, 690, 900, 18, 400)], 0.002, b"\xff\xd8crop", 1600, 900)
 
 
 class Agent:
@@ -43,7 +41,7 @@ def test_full_session(qapp, monkeypatch, tmp_path):
     world = WorldModel(store)
     overlay = Overlay(tray=False)
     agent, sent, shown = Agent(), [], []
-    pipeline = Pipeline(overlay, OfflineBrain(), analyst=LocalAnalyst(), capture=lambda: Context(b"jpg", AF, SCREEN),
+    pipeline = Pipeline(overlay, OfflineBrain(), analyst=LocalAnalyst(), capture=lambda: Context(b"jpg", AF), read_file=lambda: AF,
                         send=lambda d: sent.append(d) or f"Sent to {d.recipient}.", configured=lambda _: True,
                         pick_agent=lambda name=None: agent, show_result=lambda t, x: shown.append(x),
                         use_voice=False, spawn=lambda f: f(), capture_delay_ms=0, memory=store, world=world)
@@ -105,7 +103,7 @@ def test_full_session(qapp, monkeypatch, tmp_path):
     assert overlay.bubble.proposal.action_label == "Ask Claude Code"
     overlay.bubble.primary.click()
     task = agent.tasks[0]
-    assert task.screen_crop == b"\xff\xd8crop" and "NoneType" in task.diagnostics[0]
+    assert task.file_path == AF.path and task.file_text and "NoneType" in task.diagnostics[0]
     assert shown and shown[0].startswith("--- a/dashboard.py")
 
     # 7. Pause: everything stops; camera-driven pinch is ignored.
