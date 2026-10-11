@@ -21,7 +21,7 @@ Commit and push often, after every meaningful step, without asking first. Small 
 
 ```powershell
 py -m pip install -r requirements.txt
-py main.py [--no-voice] [--demo] [--camera]   # run; needs OPENAI_API_KEY unless --demo (see .env.example)
+py main.py [--no-voice] [--demo] [--camera]   # run; needs GROQ_API_KEY unless --demo (see .env.example)
 py tools/get_models.py                  # MediaPipe models for the webcam features
 py -m pytest -q                         # all tests; conftest forces QT_QPA_PLATFORM=offscreen
 py -m pytest tests/test_pipeline.py::test_pause_drops_late_results -q   # single test
@@ -41,6 +41,7 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
 - **Generation guard:** pause increments `gen`. `_on_deliver` drops any result whose `gen` is stale. Any new async step must go through `_run()` to keep this guarantee.
 - **Approval:** `Bubble._consume()` makes Send single-use and ties it to `Proposal.id`. `Pipeline.pending` maps that ID to a `Draft`, and dispatch happens only in `_approved(pid)`. Never dispatch from a timer, from the brain result, or without a pending entry.
 - **Errors:** each module raises one recoverable exception type (`VoiceError`, `BrainError`, `DispatchError`) with a short message suitable for the user. The pipeline shows it in the bubble. There are no automatic retries. A `VoiceError` falls back to `Overlay.ask_text()` for a typed command.
+- **LLM provider:** Groq via the `openai` SDK with a Groq `base_url`, all in `pet/llm.py` (key, models, error text). Drafting uses the vision model (screenshot ~1.8k tokens; free tier ~7k input tokens/min per model). Analysis uses a separate text model so it has its own rate-limit bucket. Never call `OpenAI()` directly elsewhere.
 - **Brain contract:** `parse_draft` requires exactly the keys `{platform, recipient, subject, message}`, with platform in `PLATFORMS`. `none` means "answer the question", shown as text with no Send button. Changing the schema means updating `SYSTEM_PROMPT`, `parse_draft`, `Pipeline._drafted` and the tests together.
 - **Dependency injection:** `Pipeline`, `Brain` and `voice.transcribe` take their collaborators (client, capture, record, send, spawn) as parameters. Tests pass fakes and `spawn=lambda f: f()` to run synchronously. Follow this pattern rather than mocking modules.
 - **UI:**

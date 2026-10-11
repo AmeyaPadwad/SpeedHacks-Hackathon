@@ -1,20 +1,20 @@
 # Pette check report
 
-- **When:** 2026-10-11 15:09 local, took 32s
-- **Code:** `dev` @ `da7d0c8` (checks run on the working tree before this report was committed)
-- **Result:** 5 pass, 0 fail, 6 skipped, 2 info
+- **When:** 2026-10-11 15:24 local, took 34s
+- **Code:** `dev` @ `78a5fab` (checks run on the working tree before this report was committed)
+- **Result:** 6 pass, 0 fail, 5 skipped, 2 info
 - **Regenerate:** `py tools/run_checks.py` (add `--webhooks` to also post a test message)
 
 | Check | Result | Detail |
 |---|---|---|
 | Environment | INFO | Windows 11 (10.0.26200), Python 3.13.9, PySide6 6.8.3, OpenCV 5.0.0, MediaPipe 1.1.0, openai 2.46.0 |
-| Unit + integration tests | PASS | 113/113 passed, 0 failed, 0 errors, 0 skipped in 23.0s |
+| Unit + integration tests | PASS | 117/117 passed, 0 failed, 0 errors, 0 skipped in 24.1s |
 | MediaPipe models | PASS | face + hand landmarker present |
 | Webcam: face / eyes / hands (live) | SKIP | --no-camera |
 | Foreground app detection | PASS | foreground = Code.exe -> show Pette |
 | VS Code bridge snapshot | SKIP | no snapshot at ~/.flowstate_current.json (extension not installed or no file open) |
 | db cache + world model | PASS | write -> learn -> read round trip in a temp db |
-| OpenAI (GPT-4o / Whisper) | SKIP | OPENAI_API_KEY not set |
+| Groq (qwen/qwen3.8-27b / whisper-large-v3-turbo) | PASS | 1-token request succeeded |
 | Claude Code agent (live, read-only) | SKIP | --no-agent |
 | Hermes agent | INFO | installed (adapter unit-tested; live run not part of checks) |
 | Slack webhook | SKIP | configured; live post skipped (run with --webhooks) |
@@ -33,6 +33,7 @@
 | `test_dispatch` | 7 | 0 |
 | `test_e2e` | 3 | 0 |
 | `test_focus` | 10 | 0 |
+| `test_llm` | 4 | 0 |
 | `test_message_cv` | 12 | 0 |
 | `test_pipeline` | 8 | 0 |
 | `test_sandbox` | 4 | 0 |

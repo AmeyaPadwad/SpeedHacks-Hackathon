@@ -14,7 +14,7 @@ from PySide6.QtGui import QActionGroup  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from db import Store, WorldModel  # noqa: E402
-from pet import agents, voice  # noqa: E402
+from pet import agents, llm, voice  # noqa: E402
 from pet.analyst import LocalAnalyst  # noqa: E402
 from pet.brain import OfflineBrain  # noqa: E402
 from pet.focus import FocusGate  # noqa: E402
@@ -111,8 +111,8 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     keys = f"{voice.HOTKEY.title()} to ask, {voice.INVESTIGATE_HOTKEY.title()} to investigate the open file."
     if args.demo:
         overlay.say(f"Demo mode: no AI. {keys}", title=OfflineBrain.label, seconds=8)
-    elif not os.environ.get("OPENAI_API_KEY"):
-        overlay.say("OPENAI_API_KEY isn't set, so voice and drafting are off. Investigate still works locally.",
+    elif not llm.configured():
+        overlay.say(f"{llm.KEY_VAR} isn't set, so voice and drafting are off. Investigate still works locally.",
                     title="Setup needed", seconds=10)
     elif hotkey_ok:
         overlay.say(f"Press {keys}", seconds=7)

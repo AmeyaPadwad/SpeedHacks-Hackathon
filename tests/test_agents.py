@@ -39,9 +39,9 @@ def test_parse_analysis_rejects(raw):
 
 
 def test_analyst_falls_back_to_labelled_local(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     a = Analyst().analyze(ctx())
-    assert a.source.startswith("diagnostics only") and "OPENAI_API_KEY" in a.source
+    assert a.source.startswith("diagnostics only") and "GROQ_API_KEY" in a.source
     assert "line 50" in a.observation and any("x is undefined" in e for e in a.evidence)
 
 

@@ -7,7 +7,7 @@
   {
     "check": "Unit + integration tests",
     "status": "PASS",
-    "detail": "113/113 passed, 0 failed, 0 errors, 0 skipped in 23.0s"
+    "detail": "117/117 passed, 0 failed, 0 errors, 0 skipped in 24.1s"
   },
   {
     "check": "MediaPipe models",
@@ -35,9 +35,9 @@
     "detail": "write -> learn -> read round trip in a temp db"
   },
   {
-    "check": "OpenAI (GPT-4o / Whisper)",
-    "status": "SKIP",
-    "detail": "OPENAI_API_KEY not set"
+    "check": "Groq (qwen/qwen3.8-27b / whisper-large-v3-turbo)",
+    "status": "PASS",
+    "detail": "1-token request succeeded"
   },
   {
     "check": "Claude Code agent (live, read-only)",

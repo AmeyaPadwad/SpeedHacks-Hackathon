@@ -7,7 +7,7 @@ from pet.voice import VoiceError, transcribe
 
 def client_returning(text=None, exc=None):
     def create(model, file):
-        assert model == "whisper-1" and file.name == "command.wav"
+        assert model == "whisper-large-v3-turbo" and file.name == "command.wav"
         if exc:
             raise exc
         return SimpleNamespace(text=text)
@@ -26,6 +26,6 @@ def test_transcribe_empty_and_errors():
 
 
 def test_transcribe_without_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(VoiceError, match="OPENAI_API_KEY"):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(VoiceError, match="GROQ_API_KEY"):
         transcribe(b"RIFF")

@@ -7,7 +7,8 @@ import json
 import os
 from dataclasses import dataclass
 
-from .brain import TIMEOUT_S, BrainError, describe_openai_error
+from . import llm
+from .brain import TIMEOUT_S, BrainError
 from .context import Context
 
 MAX_TEXT = 600
@@ -103,7 +104,7 @@ class LocalAnalyst:
 class Analyst:
     def __init__(self, client=None, model: str | None = None):
         self._client = client
-        self.model = model or os.environ.get("OPENAI_MODEL") or "gpt-4o"
+        self.model = model or llm.text_model()   # text-only analysis: its own Groq rate-limit bucket
 
     def analyze(self, ctx: Context) -> Analysis:
         """AI analysis when available; otherwise a labelled local analysis so handoff still works."""
@@ -114,16 +115,15 @@ class Analyst:
 
     def _ai(self, ctx: Context) -> Analysis:
         if self._client is None:
-            if not os.environ.get("OPENAI_API_KEY"):
-                raise BrainError("OPENAI_API_KEY is not set")
-            from openai import OpenAI
-            self._client = OpenAI(timeout=TIMEOUT_S, max_retries=0)
+            self._client = llm.client(TIMEOUT_S)
+            if self._client is None:
+                raise BrainError(f"{llm.KEY_VAR} is not set")
         try:
             resp = self._client.chat.completions.create(
-                model=self.model, response_format={"type": "json_object"}, max_tokens=500,
+                model=self.model, response_format={"type": "json_object"}, max_tokens=500, **llm.extra_args(self.model),
                 messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": self._text(ctx)}])
         except Exception as e:
-            raise BrainError(describe_openai_error(e)) from e
+            raise BrainError(llm.describe_error(e)) from e
         return parse_analysis(resp.choices[0].message.content)
 
     @staticmethod

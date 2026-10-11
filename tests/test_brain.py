@@ -75,8 +75,8 @@ def test_describe_quota_error():
 
 
 def test_brain_without_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(BrainError, match="OPENAI_API_KEY"):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(BrainError, match="GROQ_API_KEY"):
         Brain().draft("hi", Context(None, None))
 
 

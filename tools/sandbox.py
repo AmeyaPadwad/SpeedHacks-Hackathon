@@ -1,6 +1,6 @@
 """Manual test sandbox: the real Pette app plus a control panel for checking every feature by hand.
 
-    py tools/sandbox.py                    # real OpenAI + voice, sandbox webhooks/IDE/db
+    py tools/sandbox.py                    # real Groq + voice, sandbox webhooks/IDE/db
     py tools/sandbox.py --demo             # offline: typed commands, keyword drafter
     py tools/sandbox.py --live-webhooks    # really post to the Slack/Discord webhooks in .env
     py tools/sandbox.py --real-ide         # use the VS Code extension's snapshot instead of the fake one
@@ -160,7 +160,7 @@ def main() -> int:
         inbox.on_post = bridge.post.emit
 
     import main as app_main
-    from pet import context, voice
+    from pet import context, llm, voice
     from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
     from pet.watcher import InterventionPolicy
 
@@ -175,7 +175,7 @@ def main() -> int:
     panel.resize(1180, 820)
     root = QVBoxLayout(panel)
 
-    brain = "DEMO (offline keyword drafter)" if main_args.demo else f"OpenAI {os.environ.get('OPENAI_MODEL') or 'gpt-4o'}"
+    brain = "DEMO (offline keyword drafter)" if main_args.demo else f"Groq {llm.chat_model()}"
     voice_on = not (main_args.demo or main_args.no_voice)
     status = QLabel()
     status.setWordWrap(True)

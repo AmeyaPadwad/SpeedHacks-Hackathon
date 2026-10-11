@@ -10,7 +10,7 @@ Developers and knowledge workers lose their "flow state" every time they have to
 2. You press the global hotkey (`Ctrl+Shift+Space`) or click Pette.
 3. FlowState takes one screenshot of your screen and reads your active file (via the companion VS Code extension).
 4. You speak your command: *"Send a Slack to Sarah asking her to review this code."*
-5. Whisper transcribes it, and GPT-4o gets the text, screenshot and file contents.
+5. Whisper (on Groq) transcribes it, and a Groq-hosted model (Qwen 3.8 27B) gets the text, screenshot and file contents.
 6. Pette's speech bubble shows the drafted Slack message. You click **Send** (or **Cancel**).
 7. You never left your IDE.
 
@@ -20,7 +20,7 @@ Questions that aren't messages get a short answer in the bubble instead. Request
 Pette also *watches for blockers* and hands them to your coding agent (Claude Code, Hermes, or any agent via clipboard). Investigating never takes a screenshot: the agent works from the file you have open.
 
 1. **Active file.** The VS Code extension reports the active file's path, contents, selection, workspace root, and its errors and warnings, so the agent gets the real code with exact messages and line numbers.
-2. **Analysis.** GPT-4o turns the file, diagnostics and selection into an observation, evidence, likely cause, next step and confidence. Inferences are labelled as hypotheses. Without OpenAI, a **diagnostics only** analysis is used and clearly labelled.
+2. **Analysis.** Groq (gpt-oss-120b) turns the file, diagnostics and selection into an observation, evidence, likely cause, next step and confidence. Inferences are labelled as hypotheses. Without Groq, a **diagnostics only** analysis is used and clearly labelled.
 3. **Approval → coding agent.** The bubble shows the analysis with **Ask Claude Code** (or Hermes, or **Copy task**). On approval:
    - **Claude Code** runs `claude -p --permission-mode plan --tools Read,Grep,Glob` in the workspace. It gets the whole active file on stdin, can read the rest of the workspace, and proposes a root cause, a diff and a test. It cannot edit files or run commands.
    - **Hermes** runs `hermes -z` with only the planning toolset, because `-z` auto-approves tools. The file is passed inline.
@@ -58,11 +58,11 @@ Try it on the included fixture: open `fixtures/buggy_app/dashboard.py` in VS Cod
 
 ```powershell
 py -m pip install -r requirements.txt
-$env:OPENAI_API_KEY = "sk-..."
+$env:GROQ_API_KEY = "gsk_..."
 $env:SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/..."   # optional; see Configuration
 py main.py              # speak commands
 py main.py --no-voice   # type commands instead
-py main.py --demo       # offline: typed commands, keyword drafter instead of GPT-4o (no OpenAI needed)
+py main.py --demo       # offline: typed commands, keyword drafter instead of the LLM (no API key needed)
 py main.py --camera     # also turn on the webcam signals at launch
 py tools/get_models.py  # once: download the MediaPipe face/hand models into models/
 ```
@@ -90,8 +90,10 @@ All settings are environment variables. See [.env.example](.env.example).
 
 | Variable | Purpose |
 |---|---|
-| `OPENAI_API_KEY` | Required. Used for Whisper transcription and GPT-4o drafting. |
-| `OPENAI_MODEL` | Drafting model, default `gpt-4o`. |
+| `GROQ_API_KEY` | Required. Used for Whisper transcription, drafting and analysis on [Groq](https://console.groq.com). |
+| `GROQ_MODEL` | Drafting model (must accept images), default `qwen/qwen3.8-27b`. |
+| `GROQ_TEXT_MODEL` | Analysis model, default `openai/gpt-oss-120b`. |
+| `GROQ_STT_MODEL` | Transcription model, default `whisper-large-v3-turbo`. |
 | `SLACK_WEBHOOK_URL` | Slack incoming webhook. Messages post to the webhook's channel. |
 | `DISCORD_WEBHOOK_URL` | Discord webhook. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Email via SMTP with STARTTLS (port 587 by default). |
@@ -113,19 +115,19 @@ A platform with no webhook or SMTP host configured still drafts, but the bubble 
 
 ## Architecture
 
-**Flow:** hotkey or click → screenshot + active file → voice → Whisper → GPT-4o JSON draft → bubble → user approves → dispatch.
+**Flow:** hotkey or click → screenshot + active file → voice → Whisper → Groq JSON draft → bubble → user approves → dispatch.
 
 | Module | File | What it does |
 |---|---|---|
-| 1. Input engine | `pet/voice.py` | Global hotkey (`keyboard`). Records until silence (`speech_recognition` + PyAudio) and transcribes with Whisper. If the mic fails or nothing is heard, the bubble asks you to type the command. |
+| 1. Input engine | `pet/voice.py` | Global hotkey (`keyboard`). Records until silence (`speech_recognition` + PyAudio) and transcribes with Whisper on Groq. If the mic fails or nothing is heard, the bubble asks you to type the command. |
 | 2. Context capture | `pet/context.py` | One-shot Qt screenshot of the primary screen, taken with Pette hidden. Saved as an in-memory JPEG (quality 75, longest edge 1,280px). Reads the VS Code snapshot. |
-| 3. AI brain | `pet/brain.py` | GPT-4o with JSON response mode. The output must be exactly `{platform, recipient, subject, message}` with platform `slack`, `discord`, `email` or `none`; anything else is rejected. Screen and file text are treated as untrusted. |
+| 3. AI brain | `pet/brain.py` | Groq (via `pet/llm.py`) with JSON response mode. The output must be exactly `{platform, recipient, subject, message}` with platform `slack`, `discord`, `email` or `none`; anything else is rejected. Screen and file text are treated as untrusted. |
 | 4. Floating UI | `pet/ui.py`, `pet/sprites.py` | Frameless, always-on-top, draggable Pette with idle, listening, thinking, speaking and sleeping animations; a speech bubble with Send/Cancel or a text field; and the tray menu. |
 | 5. Dispatch | `pet/dispatch.py` | Slack and Discord webhooks, plus SMTP email. Discord pings only the resolved contact (`allowed_mentions`). |
 | Main loop | `pet/pipeline.py`, `main.py` | Runs the flow on the Qt main thread, with slow steps on worker threads. |
 | IDE bridge | `extensions/vscode/` | Writes the active-file snapshot, diagnostics and workspace root on editor, selection, diagnostics or save changes (debounced, atomic write). |
 | Webcam CV | `pet/vision.py` | MediaPipe Face and Hand Landmarker on a camera thread. A deterministic debounce policy emits face away/back, eyes closed/open and pinch. |
-| Analysis | `pet/analyst.py` | GPT-4o structured analysis, or a labelled local fallback. |
+| Analysis | `pet/analyst.py` | Groq structured analysis, or a labelled local fallback. |
 | Agents | `pet/agents.py` | Propose-only adapters for Claude Code, Hermes and the clipboard. |
 | Focus gate | `pet/focus.py` | Polls the foreground window's process every 300 ms (Win32 via ctypes) and shows or hides Pette. Pette's own windows and the taskbar don't count as a switch. |
 | Watcher | `pet/watcher.py` | Proactive policy: persistence, dedupe, cooldown and daily cap, plus presence gating and camera ownership. |
@@ -137,7 +139,7 @@ A platform with no webhook or SMTP host configured still drafts, but the bubble 
 - **Rate caps:** at most one AI request every 3 seconds and 50 per session. There are no automatic retries.
 - **Coding agents only propose.** Each one runs read-only or planning-only. Agent output is shown for review and never applied.
 - **Webcam data stays local.** It is off by default and released on Pause. Resuming doesn't turn it back on. Webcam data is never sent anywhere, including to coding agents.
-- Data sent to OpenAI, Slack, Discord or your SMTP server is subject to those providers' terms.
+- Data sent to Groq, Slack, Discord or your SMTP server is subject to those providers' terms.
 
 ## Development
 
@@ -162,7 +164,7 @@ Latest results: [test_results/REPORT.md](test_results/REPORT.md).
 `tools/sandbox.py` runs the real app (same hotkeys, tray, focus gate, pipeline and agents) next to a control panel, so you can check every feature by hand without touching real channels or your real memory:
 
 ```powershell
-py tools/sandbox.py                  # real OpenAI + voice; sandbox webhooks, IDE snapshot and db
+py tools/sandbox.py                  # real Groq + voice; sandbox webhooks, IDE snapshot and db
 py tools/sandbox.py --demo           # offline: typed commands, keyword drafter
 py tools/sandbox.py --live-webhooks  # really post to the Slack/Discord webhooks in .env
 py tools/sandbox.py --real-ide       # use the VS Code extension's snapshot instead of the fake one
@@ -180,10 +182,11 @@ Contacts (`sarah`, `alex`) and the memory db live in a temp folder that is delet
 - **Checked:**
   - 113 tests, plus live system checks: see [test_results/REPORT.md](test_results/REPORT.md).
   - Live Slack and Discord webhook posts.
+  - Live Groq drafting (Qwen 3.8 27B with screenshot + file) and analysis (gpt-oss-120b).
   - A live Claude Code read-only investigation of `fixtures/buggy_app`: correct root cause and a diff, with no files modified.
   - The camera opens and MediaPipe runs on Windows 11 with Python 3.13.
 - **Not yet checked:**
-  - GPT-4o drafting and analysis (the OpenAI account had no credits).
+  - Groq Whisper on a real spoken command (drafting and analysis were checked live on Groq).
   - Real-person accuracy of face, eye and pinch detection.
   - A live Hermes run.
   - Multi-monitor setups and PyInstaller packaging.

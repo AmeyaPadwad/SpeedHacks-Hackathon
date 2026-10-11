@@ -2,6 +2,8 @@
 import io
 import os
 
+from . import llm
+
 HOTKEY = os.environ.get("FLOWSTATE_HOTKEY") or "ctrl+shift+space"
 INVESTIGATE_HOTKEY = os.environ.get("FLOWSTATE_INVESTIGATE_HOTKEY") or "ctrl+alt+space"
 LISTEN_TIMEOUT_S = 6      # wait this long for speech to start
@@ -51,19 +53,17 @@ def record_until_silence() -> bytes:
 
 
 def transcribe(wav: bytes, client=None) -> str:
-    """Whisper speech-to-text. Audio stays in memory and is not saved."""
+    """Whisper speech-to-text on Groq. Audio stays in memory and is not saved."""
     if client is None:
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise VoiceError("OPENAI_API_KEY is not set.")
-        from openai import OpenAI
-        client = OpenAI(timeout=TRANSCRIBE_TIMEOUT_S, max_retries=0)
+        client = llm.client(TRANSCRIBE_TIMEOUT_S)
+        if client is None:
+            raise VoiceError(f"{llm.KEY_VAR} is not set.")
     f = io.BytesIO(wav)
     f.name = "command.wav"
     try:
-        text = client.audio.transcriptions.create(model="whisper-1", file=f).text
+        text = client.audio.transcriptions.create(model=llm.stt_model(), file=f).text
     except Exception as e:
-        from .brain import describe_openai_error
-        raise VoiceError(describe_openai_error(e)) from e
+        raise VoiceError(llm.describe_error(e)) from e
     text = (text or "").strip()
     if not text:
         raise VoiceError("Couldn't make out any words.")

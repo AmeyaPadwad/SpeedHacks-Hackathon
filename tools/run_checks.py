@@ -169,20 +169,19 @@ def db_check():
     record("db cache + world model", "PASS" if ok else "FAIL", "write -> learn -> read round trip in a temp db")
 
 
-@check("OpenAI (GPT-4o / Whisper)")
+@check("Groq (chat + Whisper)")
 def openai_check():
-    if not os.environ.get("OPENAI_API_KEY"):
-        record("OpenAI (GPT-4o / Whisper)", "SKIP", "OPENAI_API_KEY not set")
+    from pet import llm
+    name = f"Groq ({llm.chat_model()} / {llm.stt_model()})"
+    client = llm.client(20)
+    if client is None:
+        record(name, "SKIP", f"{llm.KEY_VAR} not set")
         return
-    from openai import OpenAI
-
-    from pet.brain import describe_openai_error
     try:
-        OpenAI(timeout=20, max_retries=0).chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL") or "gpt-4o", max_tokens=1, messages=[{"role": "user", "content": "hi"}])
-        record("OpenAI (GPT-4o / Whisper)", "PASS", "1-token request succeeded")
+        client.chat.completions.create(model=llm.chat_model(), max_tokens=1, messages=[{"role": "user", "content": "hi"}])
+        record(name, "PASS", "1-token request succeeded")
     except Exception as e:
-        record("OpenAI (GPT-4o / Whisper)", "FAIL", describe_openai_error(e) + " (app falls back to labelled local analysis)")
+        record(name, "FAIL", llm.describe_error(e) + " (app falls back to labelled local analysis)")
 
 
 @check("Claude Code agent (live, read-only)")
