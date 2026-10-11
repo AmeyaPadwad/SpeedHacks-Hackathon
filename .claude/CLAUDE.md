@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `README.md` is the spec being built: **FlowState**, a hotkey + voice + screenshot + active-file agent that drafts Slack, Discord or email messages for approval. It is shown on screen as the **Pette** sprite. All five README modules and the VS Code extension are implemented.
 
-The `brainstorming/` files are alternative specs and are not being built. They are a reference only:
+The computer-vision layer draws on the two `brainstorming/` specs:
 
-- `BUILD.md`: a webcam desktop pet.
-- `VISUAL_CODING_COMPANION.md`: an Electron coding companion.
+- `BUILD.md`: webcam face, eye and pinch signals.
+- `VISUAL_CODING_COMPANION.md`: screen context to a coding-agent harness, plus a proactive policy.
 
-If a request clearly targets one of them, ask before mixing it in.
+Both specs are references only. This project is Python and PySide6, not the Electron stack in `VISUAL_CODING_COMPANION.md`.
 
 ## Git workflow
 
@@ -21,7 +21,8 @@ Commit and push often, after every meaningful step, without asking first. Small 
 
 ```powershell
 py -m pip install -r requirements.txt
-py main.py [--no-voice]                 # run; needs OPENAI_API_KEY (see .env.example)
+py main.py [--no-voice] [--demo] [--camera]   # run; needs OPENAI_API_KEY unless --demo (see .env.example)
+py tools/get_models.py                  # MediaPipe models for the webcam features
 py -m pytest -q                         # all tests; conftest forces QT_QPA_PLATFORM=offscreen
 py -m pytest tests/test_pipeline.py::test_pause_drops_late_results -q   # single test
 py tools/prep_sprites.py                # rebuild assets/pette_sheet.png (needs Pillow + numpy)
@@ -43,7 +44,19 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
   - `Overlay._reanchor` keeps Pette fixed on screen while the bubble resizes. Change bubble content only through `Overlay` methods.
   - `ANIMATIONS` in `sprites.py` maps state names to sheet frames. The frame order is a contract with `tools/prep_sprites.py`.
   - Never load the raw `images/pette-spritesheet.png`, because it has an opaque checkerboard baked in.
-- **IDE bridge:** the VS Code extension and `context.read_active_file` share the JSON schema `{path, language, content, selection, line, updatedAt}` at `~/.flowstate_current.json`, overridden by `FLOWSTATE_ACTIVE_FILE`. Keep both sides in sync.
+- **IDE bridge:** the VS Code extension and `context.read_active_file` share the JSON schema `{path, workspace, language, content, selection, line, diagnostics[{line, severity, message, source, code}], updatedAt}` at `~/.flowstate_current.json`, overridden by `FLOWSTATE_ACTIVE_FILE`. Keep both sides in sync.
+
+### CV → coding agents
+- **Screen CV:** `context.capture()` returns a `Context(screenshot_jpeg, active_file, screen)`, where `screen` holds the `screen_cv.ScreenFindings` for the same frame. `screen_cv` is a red-hue locator, not OCR. Its shape and density filters (`MIN_ASPECT`, `MAX_DENSITY`) were tuned against false positives from real UI, so re-check on a real screen after changing them.
+- **Investigate flow** (`Pipeline.investigate`, the `agent` brain platform, or an approved `offer_investigation`): `_capture_then`, then `analyst.analyze`, then a proposal, then `_run_agent` on approval. `pending` values are a `Draft`, an `AgentTask` or the `OFFER` marker. `_approved` dispatches on type.
+- **Agents** (`pet/agents.py`) are propose-only by construction:
+  - Claude Code runs with `-p --permission-mode plan --tools Read,Grep,Glob` and the prompt on stdin.
+  - Hermes runs with `-z ... -t todo`, because `-z` auto-approves tools.
+  - Never add write or terminal tools, `--yolo`, or permission bypasses. `tests/test_agents.py` asserts the argument lists.
+  - Only add an adapter after checking the CLI's real `--help`.
+- **Webcam:** `vision.VisionPolicy` holds the debounce rules as pure logic and is unit-tested. `CameraWorker` (a QThread) emits event names only, never frames or landmarks. `Watcher` owns the camera and the poll timer, and gates proactive offers on presence. Gestures call `Overlay.pinch()`, which must never approve or cancel a proposal.
+- **Proactive offers:** `watcher.InterventionPolicy` handles persistence, fingerprint dedupe, the cooldown and the daily cap, and it defers while the user is away, has eyes closed, or is busy. An offer only asks. The screen is captured only after the user approves.
+- MediaPipe models live in `models/*.task` (gitignored) and are downloaded with `py tools/get_models.py`. `fixtures/buggy_app` is a deliberate bug for demos and is excluded from pytest by `pytest.ini`.
 
 ## Conventions
 
