@@ -8,3 +8,4 @@ models/*.task
 db/*.sqlite3
 db/*.sqlite3-*
 web/node_modules/
+web/*.tsbuildinfo
