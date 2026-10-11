@@ -30,3 +30,15 @@ def test_encode_jpeg_downscales(qapp):
     out = QPixmap()
     out.loadFromData(data)
     assert max(out.width(), out.height()) == MAX_EDGE
+
+
+def test_read_diagnostics_and_workspace(tmp_path):
+    f = tmp_path / "cur.json"
+    f.write_text(json.dumps({"path": "a.py", "workspace": "C:/repo", "diagnostics": [
+        {"line": 3, "severity": "error", "message": "x is undefined", "source": "Pylance", "code": "reportUndefinedVariable"},
+        {"line": 9, "severity": "warning", "message": "unused import"},
+        "garbage",
+    ]}))
+    af = read_active_file(f)
+    assert af.workspace == "C:/repo" and len(af.diagnostics) == 2
+    assert [str(d) for d in af.errors] == ["line 3 error [Pylance reportUndefinedVariable]: x is undefined"]
