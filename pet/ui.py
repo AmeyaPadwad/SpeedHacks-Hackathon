@@ -286,6 +286,7 @@ class Overlay(QWidget):
         lay.addWidget(self.bubble, 0, Qt.AlignHCenter)
         lay.addWidget(self.pet, 0, Qt.AlignHCenter)
         self.paused = False
+        self.context_allowed = True   # False while the foreground app isn't VS Code / a terminal (FocusGate)
         self.away = self.eyes_closed = False
         self._base_state = "idle"
         self.bubble.approved.connect(self._decided(self.approved))
@@ -307,6 +308,19 @@ class Overlay(QWidget):
         elif state == "idle" and self.eyes_closed:
             state = "blink"
         self.pet.set_state(state)
+
+    def set_context_allowed(self, allowed: bool):
+        """Hide Pette outside VS Code / terminals; pending proposals stay pending until she reappears."""
+        self.context_allowed = allowed
+        if allowed:
+            self.show()
+        else:
+            self.hide()
+
+    def reveal(self):
+        """Show again after a temporary hide (e.g. screenshot), unless the focus gate says otherwise."""
+        if self.context_allowed:
+            self.show()
 
     def set_presence(self, away: bool, eyes_closed: bool):
         """Webcam reactions; only change Pette's look while she's otherwise idle."""

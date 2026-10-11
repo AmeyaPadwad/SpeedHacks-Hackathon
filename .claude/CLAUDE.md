@@ -56,6 +56,10 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
   - Only add an adapter after checking the CLI's real `--help`.
 - **Webcam:** `vision.VisionPolicy` holds the debounce rules as pure logic and is unit-tested. `CameraWorker` (a QThread) emits event names only, never frames or landmarks. `Watcher` owns the camera and the poll timer, and gates proactive offers on presence. Gestures call `Overlay.pinch()`, which must never approve or cancel a proposal.
 - **Proactive offers:** `watcher.InterventionPolicy` handles persistence, fingerprint dedupe, the cooldown and the daily cap, and it defers while the user is away, has eyes closed, or is busy. An offer only asks. The screen is captured only after the user approves.
+- **Focus gate** (`pet/focus.py`): `Overlay.context_allowed` is False while the foreground app isn't VS Code or a terminal.
+  - `classify()` returns None (neutral) for Pette's own process and for taskbar/tray window classes. Otherwise clicking Pette or the tray would hide her.
+  - After a temporary hide, use `Overlay.reveal()`, never `show()`, so the gate isn't overridden.
+  - `Pipeline._can_start()` blocks hotkeys and offers while hidden. The watcher treats hidden as busy, so offers are deferred, not lost.
 - MediaPipe models live in `models/*.task` (gitignored) and are downloaded with `py tools/get_models.py`. `fixtures/buggy_app` is a deliberate bug for demos and is excluded from pytest by `pytest.ini`.
 
 ## Conventions

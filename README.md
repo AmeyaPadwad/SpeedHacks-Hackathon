@@ -52,7 +52,12 @@ py tools/get_models.py  # once: download the MediaPipe face/hand models into mod
 
 Settings load from a `.env` file in the repo root if present; real environment variables take precedence. In `--demo` mode every draft is labeled **DEMO (offline, no AI)**. Webhooks still fire for real when you click Send.
 
-Pette appears in the bottom-right corner with a tray icon. Then:
+Pette appears in the bottom-right corner with a tray icon, **only while VS Code or a terminal is the app in front**. That includes Windows Terminal, PowerShell, cmd, Git Bash (mintty), WezTerm, Alacritty, Tabby, Hyper and Warp. Switch to a browser or chat app and she hides. Hotkeys and proactive offers also pause until you're back, and a pending proposal waits for you. Clicking Pette or her tray menu doesn't count as switching apps.
+
+- To show her everywhere, turn off **Show only in VS Code / Terminal** in the tray, or run with `--always-show`.
+- To use a different app list, set `FLOWSTATE_SHOW_IN`, e.g. `FLOWSTATE_SHOW_IN=Code.exe,Cursor.exe,WindowsTerminal.exe`.
+
+Then:
 
 - Press `Ctrl+Shift+Space`, or click Pette, and speak.
 - Press `Ctrl+Alt+Space` (or use **Investigate screen** in the tray) to send what's on screen to your coding agent.
@@ -76,6 +81,7 @@ All settings are environment variables. See [.env.example](.env.example).
 | `FLOWSTATE_HOTKEY` | Global hotkey, default `ctrl+shift+space`. |
 | `FLOWSTATE_INVESTIGATE_HOTKEY` | Screen-investigate hotkey, default `ctrl+alt+space`. |
 | `FLOWSTATE_AGENT` | `claude`, `hermes` or `clipboard`. Default: the first installed. |
+| `FLOWSTATE_SHOW_IN` | Comma-separated process names where Pette appears. Default: VS Code plus common terminals. |
 | `FLOWSTATE_AGENT_TIMEOUT` | Seconds before an agent run is abandoned, default 240. |
 | `FLOWSTATE_CONTACTS` | Contacts file, default `~/.flowstate_contacts.json`. |
 | `FLOWSTATE_ACTIVE_FILE` | Active-file snapshot path, default `~/.flowstate_current.json`. Set the same value for VS Code and the app. |
@@ -105,6 +111,7 @@ A platform with no webhook or SMTP host configured still drafts, but the bubble 
 | Webcam CV | `pet/vision.py` | MediaPipe Face and Hand Landmarker on a camera thread. A deterministic debounce policy emits face away/back, eyes closed/open and pinch. |
 | Analysis | `pet/analyst.py` | GPT-4o structured analysis, or a labelled local fallback. |
 | Agents | `pet/agents.py` | Propose-only adapters for Claude Code, Hermes and the clipboard. |
+| Focus gate | `pet/focus.py` | Polls the foreground window's process every 300 ms (Win32 via ctypes) and shows or hides Pette. Pette's own windows and the taskbar don't count as a switch. |
 | Watcher | `pet/watcher.py` | Proactive policy: persistence, dedupe, cooldown and daily cap, plus presence gating and camera ownership. |
 
 ### Safety rules

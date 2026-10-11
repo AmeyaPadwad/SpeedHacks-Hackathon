@@ -83,7 +83,7 @@ class Pipeline(QObject):
                 return
             self.ctx = self._capture()
             if was_visible:
-                self.overlay.show()
+                self.overlay.reveal()
             next_step()
 
         if self._delay:
@@ -92,8 +92,11 @@ class Pipeline(QObject):
             after_capture()
 
     # --- voice / message flow ---------------------------------------------
+    def _can_start(self) -> bool:
+        return not (self.overlay.paused or self.busy) and self.overlay.context_allowed
+
     def trigger(self):
-        if self.overlay.paused or self.busy:
+        if not self._can_start():
             return
         self._capture_then(self._listen)
 
@@ -148,13 +151,13 @@ class Pipeline(QObject):
     # --- screen CV -> analysis -> coding agent ----------------------------
     def investigate(self):
         """Explicit request (tray/hotkey/approved offer): capture the screen and analyse it."""
-        if self.overlay.paused or self.busy:
+        if not self._can_start():
             return
         self._capture_then(self._analyze)
 
     def offer_investigation(self, reason: str):
         """Proactive: ask first. Nothing is captured or uploaded unless the user clicks Investigate."""
-        if self.overlay.paused or self.busy or self.overlay.bubble.isVisible():
+        if not self._can_start() or self.overlay.bubble.isVisible():
             return
         p = Proposal(title="Looks like you're stuck", body=f"{reason}\n\nWant me to look at your screen and "
                      f"prepare a task for {self.agent.label}?", action_label="Investigate")

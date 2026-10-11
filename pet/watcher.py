@@ -147,7 +147,8 @@ class Watcher(QObject):
         if self.watch_screen and self.present and not self.overlay.isHidden():
             findings = self._grab_findings(self.overlay)
             screen_fp = findings.fingerprint() if findings and findings.has_errors else None
-        busy = self._is_busy() or self.overlay.bubble.isVisible()
+        # Outside VS Code / terminals counts as busy, so the offer is deferred rather than lost.
+        busy = self._is_busy() or self.overlay.bubble.isVisible() or not self.overlay.context_allowed
         hit = self.policy.update(Signals(time.time(), fp, summary, screen_fp, self.present, self.eyes_closed, busy))
         if hit:
             self.offer.emit(hit[1])

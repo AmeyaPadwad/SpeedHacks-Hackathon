@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from pet import agents, voice  # noqa: E402
 from pet.analyst import LocalAnalyst  # noqa: E402
 from pet.brain import OfflineBrain  # noqa: E402
+from pet.focus import FocusGate  # noqa: E402
 from pet.pipeline import Pipeline  # noqa: E402
 from pet.ui import Overlay, ResultPanel  # noqa: E402
 from pet.watcher import Watcher  # noqa: E402
@@ -26,6 +27,8 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true",
                     help="offline demo: typed commands, keyword drafter and local-only analysis (labeled DEMO)")
     ap.add_argument("--camera", action="store_true", help="turn on the webcam (local face/eyes/pinch) at launch")
+    ap.add_argument("--always-show", action="store_true",
+                    help="show Pette over every app, not only VS Code and terminals")
     args = ap.parse_args()
 
     app = QApplication(sys.argv)
@@ -37,6 +40,10 @@ def main() -> int:
                         show_result=results.show_result, use_voice=not (args.no_voice or args.demo))
     watcher = Watcher(overlay, lambda: pipeline.busy)
     watcher.offer.connect(pipeline.offer_investigation)
+    gate = FocusGate(overlay)
+    overlay.add_menu_action("Show only in VS Code / Terminal", gate.set_enabled, checkable=True,
+                            checked=not args.always_show)
+    gate.enabled = gate.enabled and not args.always_show
 
     # --- tray: CV controls (camera off by default; screen watching off by default) ---
     camera_action = overlay.add_menu_action("Camera: face, eyes, pinch (local)", watcher.set_camera, checkable=True)
@@ -79,6 +86,7 @@ def main() -> int:
 
     overlay.place_default()
     overlay.show()
+    gate.start()   # hides Pette right away if VS Code / a terminal isn't in front
     if args.camera and camera_action:
         camera_action.setChecked(True)
     keys = f"{voice.HOTKEY.title()} to ask, {voice.INVESTIGATE_HOTKEY.title()} to investigate your screen."
