@@ -248,13 +248,15 @@ class Pipeline(QObject):
         gen = self.gen
 
         def task():
+            # Bind the exception as a default: Python unbinds `e` when the except block ends, and the
+            # lambda runs later on the main thread (queued signal).
             try:
                 result = work()
                 self._deliver.emit(gen, lambda: on_ok(result))
             except expected as e:
-                self._deliver.emit(gen, lambda: on_err(e))
+                self._deliver.emit(gen, lambda e=e: on_err(e))
             except Exception as e:  # never let a worker die silently
-                self._deliver.emit(gen, lambda: self._fail(f"Unexpected error: {type(e).__name__}"))
+                self._deliver.emit(gen, lambda e=e: self._fail(f"Unexpected error: {type(e).__name__}"))
 
         self._spawn(task)
 

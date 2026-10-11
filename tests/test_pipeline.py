@@ -177,3 +177,22 @@ def test_busy_ignores_retrigger(make):
     p.trigger()
     p.trigger()
     assert p.busy and p.state == "listening"
+
+
+def test_errors_from_a_real_worker_thread_reach_the_bubble(make):
+    """Regression: the error lambda ran after `except` unbound `e` (NameError), so failures never showed."""
+    import threading
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    def no_mic(on_level=None, register_cancel=None):
+        raise VoiceError("Microphone unavailable.")
+    o, p, sent, _ = make(listen=no_mic)
+    p._spawn = lambda f: threading.Thread(target=f, daemon=True).start()   # queued delivery, like the app
+    p.trigger()
+    deadline = time.time() + 3
+    while not o.bubble.asking and time.time() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.01)
+    assert o.bubble.asking and "Microphone unavailable" in o.bubble.body.text()
