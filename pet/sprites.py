@@ -14,7 +14,9 @@ ANIMATIONS = {
     "listening": [LOOK, IDLE_A],
     "thinking": [TYPING, LOOK, TYPING, IDLE_B],
     "speaking": [HAPPY, IDLE_A, HAPPY, WAVE],
-    "sleeping": [HAPPY],
+    "sleeping": [HAPPY],   # paused
+    "away": [HAPPY],       # webcam: face not seen for a while
+    "blink": [HAPPY],      # webcam: user's eyes closed -> Pette closes hers
 }
 
 

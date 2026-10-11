@@ -31,11 +31,13 @@ class AgentTask:
     diagnostics: tuple[str, ...]
     excerpt: str
     screen_crop: bytes | None = field(default=None, repr=False)
+    user_request: str = ""
 
     @classmethod
-    def from_context(cls, analysis: Analysis, ctx: Context) -> "AgentTask":
+    def from_context(cls, analysis: Analysis, ctx: Context, user_request: str = "") -> "AgentTask":
         af = ctx.active_file
         return cls(
+            user_request=user_request,
             analysis=analysis,
             workspace=(af.workspace if af else "") or (os.path.dirname(af.path) if af else ""),
             file_path=af.path if af else "",
@@ -51,6 +53,10 @@ def build_prompt(t: AgentTask, image_path: str | None = None) -> str:
         "A desktop companion detected a likely blocker on the developer's screen. Investigate it.",
         "DO NOT modify files or run commands that change state. Propose only.",
         "",
+    ]
+    if t.user_request:
+        lines.append(f"Developer's request (spoken): {t.user_request}")
+    lines += [
         f"Observation: {a.observation}",
         f"Likely cause (hypothesis, {a.confidence:.0%} confidence, source: {a.source}): {a.likely_cause}",
         f"Suggested next step: {a.next_step}",

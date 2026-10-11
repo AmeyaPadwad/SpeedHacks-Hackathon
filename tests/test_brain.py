@@ -86,4 +86,6 @@ def test_offline_brain_drafts():
                              Context(None, ActiveFile("C:/x/auth.py", "python", "", "")))
     assert (d.platform, d.recipient) == ("slack", "Sarah")
     assert d.message == "Hi Sarah, could you review this code in auth.py. Thanks!"
-    assert OfflineBrain().draft("what is this error", Context(None, None)).platform == "none"
+    assert OfflineBrain().draft("what is this error", Context(None, None)).platform == "agent"
+    assert OfflineBrain().draft("what time is it", Context(None, None)).platform == "none"
+    assert parse_draft(ok(platform="agent", recipient="")).platform == "agent"
