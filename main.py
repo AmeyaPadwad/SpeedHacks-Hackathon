@@ -11,21 +11,33 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from pet import voice  # noqa: E402
-from pet.brain import OfflineBrain  # noqa: E402
-from pet.pipeline import Pipeline  # noqa: E402
-from pet.ui import Overlay  # noqa: E402
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="FlowState voice agent")
     ap.add_argument("--no-voice", action="store_true", help="type commands instead of speaking them")
     ap.add_argument("--demo", action="store_true",
                     help="offline demo: typed commands, keyword drafter instead of GPT-4o (labeled DEMO)")
+    ap.add_argument("--input-gathering", action="store_true", help="macOS coding input collector; emits reviewed context for Darwin")
+    ap.add_argument("--project", type=Path, default=Path.cwd(), help="project directory for input gathering (default: launch directory)")
     args = ap.parse_args()
+    if args.input_gathering:
+        if args.demo or args.no_voice:
+            ap.error("--input-gathering has its own Type task button; use it without --demo/--no-voice")
+        if not args.project.expanduser().is_dir():
+            ap.error("--project must point to an existing directory")
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    from pet.runtime import TerminalShutdown
+    shutdown = TerminalShutdown(app)
+    if args.input_gathering:
+        from pet.inputs.ui import run_input_gathering
+        return run_input_gathering(app, args.project)
+
+    from pet import voice
+    from pet.brain import OfflineBrain
+    from pet.pipeline import Pipeline
+    from pet.ui import Overlay
+
     overlay = Overlay()
     brain = OfflineBrain() if args.demo else None
     pipeline = Pipeline(overlay, brain, use_voice=not (args.no_voice or args.demo))

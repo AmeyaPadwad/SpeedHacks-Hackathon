@@ -1,6 +1,11 @@
 .venv/
+.venv-mixed-backup-314/
 __pycache__/
 .env
 *.log
 dist/
 build/
+models/
+.pytest_cache/
+flowstate-context*.json
+.whisper-runtime/

@@ -261,6 +261,12 @@ class Overlay(QWidget):
         self.set_state("speaking")
         self._arm_hide(None)  # a pending approval never times out silently
 
+    def update_proposal_body(self, proposal_id: str, text: str):
+        """Update live progress without replacing the action's single-use id."""
+        if self.paused or self.bubble.proposal is None or self.bubble.proposal.id != proposal_id:
+            return
+        self._reanchor(lambda: self.bubble.body.setText(text))
+
     def ask_text(self, prompt: str):
         """Typed-command fallback; the window takes focus so the user can type."""
         if self.paused:
@@ -301,8 +307,8 @@ class Overlay(QWidget):
 
     def _decided(self, signal):
         def handler(pid):
-            signal.emit(pid)
             self.set_state("idle")
+            signal.emit(pid)
         return handler
 
     def _on_input_cancelled(self):
