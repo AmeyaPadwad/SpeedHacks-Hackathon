@@ -12,7 +12,7 @@ from dataclasses import replace
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from . import context, dispatch, voice
+from . import context, darwin, dispatch, voice
 from .brain import PLATFORM_WORDS, Brain, BrainError, Draft
 from .dispatch import DispatchError
 from .ui import Overlay, Proposal
@@ -73,7 +73,7 @@ class Pipeline(QObject):
         overlay.input_cancelled.connect(lambda: self._set("idle"))
         overlay.approved.connect(self._approved)
         overlay.cancelled.connect(self._cancelled)
-        overlay.pinch_on_proposal.connect(self._cancelled)   # a gesture can cancel a send, never trigger one
+        overlay.pinch_on_proposal.connect(self._pinch_send)  # pinch = send the pending message now
         overlay.pause_toggled.connect(self._paused)
 
     # --- state ------------------------------------------------------------
@@ -138,10 +138,12 @@ class Pipeline(QObject):
         self.overlay.say(f"“{command}”", title="You said", seconds=None)
 
         def work():
+            if darwin.wants_darwin(command):   # "search Darwin for …" -> results as a Slack draft
+                return darwin.draft(command)
             self.ctx = self._capture()    # file + git diff only; no screenshot
             return self.brain.draft(command, self.ctx)
 
-        self._run(work, self._drafted, self._fail, BrainError)
+        self._run(work, self._drafted, self._fail, (BrainError, darwin.DarwinError))
 
     # --- 3. draft -> countdown -> dispatch --------------------------------
     def _drafted(self, d: Draft):
@@ -209,6 +211,11 @@ class Pipeline(QObject):
             self.overlay.say(str(e), title="Not sent", seconds=8)
 
         self._run(lambda: self._send(d), sent, failed, DispatchError)
+
+    def _pinch_send(self, pid: str):
+        """The one gesture: pinch on a pending draft sends it (same as Send now). Single-use via consume()."""
+        if pid in self.pending and self.overlay.bubble.consume() == pid:
+            self._approved(pid)
 
     def _cancelled(self, pid: str):
         self._countdown.stop()

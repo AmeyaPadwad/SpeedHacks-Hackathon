@@ -18,6 +18,9 @@ There is one workflow:
 
 Questions that aren't messages ("what does this file do?") get a short answer in the bubble, and nothing is sent.
 
+### Darwin search
+Say *"Search Darwin for an agent that books meetings"* (or *"find a tool that …"*). Pette calls [Darwin Search](https://darwin.so/docs/search/using-results) (`POST https://api.darwin.so/api/v3/search`, no key), and the top matches (name, readiness, why it matched, `searchId`) become a Slack draft. Pinch or the countdown posts it. Search only finds capabilities; Pette never connects to or runs them (`pet/darwin.py`).
+
 ### What gets sent
 - **Your message:** written by Groq from your words, with a 1–3 sentence summary of the change.
 - **The code:** attached by Pette, never written by the model. It's the uncommitted `git diff` of the active file, or your selection, or the file itself. On Slack and Discord it's a fenced ```diff``` / code block, trimmed to fit (Discord's 2,000-character limit is respected). On email it's plain text.
@@ -32,13 +35,12 @@ Pette never talks back. ElevenLabs is used for speech-to-text, and the transcrip
 Click Pette again while she's listening to stop. If the mic or transcription fails, a text box opens and typing works the same way.
 
 ### The camera orb
-A circle above Pette shows **you** (mirrored webcam, 168px, processed and drawn locally only). It also shows your **hand** skeleton with the recognised gesture (*open hand, pinch, point, peace, fist*). A glowing ring shows the status: violet *Listening* → blue *Thinking* → amber *Sending in Ns* → green *Sent ✓* / red or grey *Not sent*.
+A circle above Pette shows **you** (mirrored webcam, 168px, processed and drawn locally only). It also shows your **hand** skeleton and a chip when you **pinch**, the one recognised gesture. A glowing ring shows the status: violet *Listening* → blue *Thinking* → amber *Sending in Ns* → green *Sent ✓* / red or grey *Not sent*.
 
 | Webcam signal | Effect |
 |---|---|
-| **Pinch** (idle) | Same as clicking Pette: start listening |
-| **Pinch** during the countdown | Cancel the send. A gesture never sends anything |
-| **Pinch** on a plain message | Dismiss it |
+| **Pinch** (idle) | Nothing: click Pette to talk |
+| **Pinch** while a draft is counting down | **Send it now** (same as Send now). Cancel is the button |
 | **Away → back** | Pette dozes while you're away. On return, a pending send is re-titled *"Still sending?"* |
 | **Eyes closed** | Pette closes her eyes too |
 

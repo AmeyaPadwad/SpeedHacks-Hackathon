@@ -500,21 +500,11 @@ class Overlay(QWidget):
         self.orb.set_camera(on)
 
     def pinch(self):
-        """Gesture control. A gesture never sends anything.
-
-        - idle: start listening (same as clicking Pette)
-        - plain message showing: dismiss it
-        - a send counting down: cancel it
-        - typing a command: ignored
-        """
+        """The only gesture: pinch sends the pending message now (same as Send now). Otherwise ignored."""
         if self.paused or self.bubble.asking or not self.context_allowed:
             return
         if self.bubble.proposal:
             self.pinch_on_proposal.emit(self.bubble.proposal.id)
-        elif self.bubble.isVisible() and self.orb.state not in ("listening", "thinking", "sending"):
-            self.dismiss()
-        else:
-            self.ask_requested.emit()
 
     def nudge(self):
         """Back from being away: bring a pending send to attention."""

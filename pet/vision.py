@@ -114,25 +114,11 @@ def pinch_ratio(landmarks) -> float | None:
 
 
 def gesture_name(landmarks) -> str:
-    """Coarse hand pose for the orb label: pinch, open hand, point, peace, fist (or "hand")."""
+    """Orb label: "pinch" (the one recognised gesture) or "" for anything else."""
     if landmarks is None or len(landmarks) < 21:
         return ""
     r = pinch_ratio(landmarks)
-    if r is not None and r < VisionPolicy.PINCH_ON:
-        return "pinch"
-    wrist = landmarks[0]
-    d = lambda a: math.hypot(a.x - wrist.x, a.y - wrist.y)
-    up = [d(landmarks[tip]) > d(landmarks[pip]) * 1.1 for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18))]
-    n = sum(up)
-    if n >= 4:
-        return "open hand"
-    if up == [True, False, False, False]:
-        return "point"
-    if up == [True, True, False, False]:
-        return "peace"
-    if n == 0:
-        return "fist"
-    return "hand"
+    return "pinch" if r is not None and r < VisionPolicy.PINCH_ON else ""   # pinch is the only gesture
 
 
 def preview(rgb, hand_landmarks, size: int = 168) -> dict:
