@@ -12,6 +12,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pet import voice  # noqa: E402
+from pet.brain import OfflineBrain  # noqa: E402
 from pet.pipeline import Pipeline  # noqa: E402
 from pet.ui import Overlay  # noqa: E402
 
@@ -19,19 +20,25 @@ from pet.ui import Overlay  # noqa: E402
 def main() -> int:
     ap = argparse.ArgumentParser(description="FlowState voice agent")
     ap.add_argument("--no-voice", action="store_true", help="type commands instead of speaking them")
+    ap.add_argument("--demo", action="store_true",
+                    help="offline demo: typed commands, keyword drafter instead of GPT-4o (labeled DEMO)")
     args = ap.parse_args()
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     overlay = Overlay()
-    pipeline = Pipeline(overlay, use_voice=not args.no_voice)
+    brain = OfflineBrain() if args.demo else None
+    pipeline = Pipeline(overlay, brain, use_voice=not (args.no_voice or args.demo))
 
     hotkey_ok = voice.register_hotkey(pipeline.hotkey_pressed.emit)
     app.aboutToQuit.connect(voice.unregister_hotkeys)
 
     overlay.place_default()
     overlay.show()
-    if not os.environ.get("OPENAI_API_KEY"):
+    if args.demo:
+        overlay.say(f"Demo mode: no AI. Press {voice.HOTKEY.title()} or click me, then type a command.",
+                    title=OfflineBrain.label, seconds=8)
+    elif not os.environ.get("OPENAI_API_KEY"):
         overlay.say("OPENAI_API_KEY isn't set, so I can't draft anything yet.", title="Setup needed", seconds=10)
     elif hotkey_ok:
         overlay.say(f"Press {voice.HOTKEY.title()} or click me, then speak.", seconds=6)

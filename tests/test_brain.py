@@ -78,3 +78,12 @@ def test_brain_without_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(BrainError, match="OPENAI_API_KEY"):
         Brain().draft("hi", Context(None, None))
+
+
+def test_offline_brain_drafts():
+    from pet.brain import OfflineBrain
+    d = OfflineBrain().draft("Send a Slack to Sarah asking her to review this code",
+                             Context(None, ActiveFile("C:/x/auth.py", "python", "", "")))
+    assert (d.platform, d.recipient) == ("slack", "Sarah")
+    assert d.message == "Hi Sarah, could you review this code in auth.py. Thanks!"
+    assert OfflineBrain().draft("what is this error", Context(None, None)).platform == "none"

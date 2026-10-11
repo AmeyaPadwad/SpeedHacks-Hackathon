@@ -24,7 +24,10 @@ $env:OPENAI_API_KEY = "sk-..."
 $env:SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/..."   # optional; see Configuration
 py main.py              # speak commands
 py main.py --no-voice   # type commands instead
+py main.py --demo       # offline: typed commands, keyword drafter instead of GPT-4o (no OpenAI needed)
 ```
+
+Settings load from a `.env` file in the repo root if present; real environment variables take precedence. In `--demo` mode every draft is labeled **DEMO (offline, no AI)**. Webhooks still fire for real when you click Send.
 
 Pette appears in the bottom-right corner with a tray icon. Then:
 

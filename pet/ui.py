@@ -320,6 +320,7 @@ class Overlay(QWidget):
         """Apply a bubble change, then resize keeping the pet fixed on screen."""
         old = self.geometry()
         change()
+        self.bubble.adjustSize()  # shrink back when buttons/input are hidden
         self.adjustSize()
         g = self.geometry()
         g.moveBottom(old.bottom())

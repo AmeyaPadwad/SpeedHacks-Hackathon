@@ -98,12 +98,15 @@ class Pipeline(QObject):
 
     def _drafted(self, d: Draft):
         self._reset()
+        label = getattr(self.brain, "label", "")  # demo brains must say so on every draft
         if d.platform == "none":
-            self.overlay.say(d.message, title="FlowState", seconds=15)
+            self.overlay.say(d.message, title=label or "FlowState", seconds=15)
             return
         title = f"{d.platform.capitalize()} to {d.recipient}"
         if not self._configured(d.platform):
             title += " (not configured)"
+        if label:
+            title = f"{label} · {title}"
         body = f"Subject: {d.subject}\n\n{d.message}" if d.platform == "email" and d.subject else d.message
         p = Proposal(title=title, body=body, action_label="Send")
         self.pending[p.id] = d
