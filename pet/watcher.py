@@ -131,6 +131,8 @@ class Watcher(QObject):
 
     # --- inputs -------------------------------------------------------------
     def on_vision_event(self, ev: str):
+        if self.overlay.paused:   # paused means no reactions and no logging
+            return
         now = self._clock()
         self._log(ev)
         if ev == FACE_AWAY:
