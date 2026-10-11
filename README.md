@@ -38,6 +38,24 @@ Developers and knowledge workers lose their "flow state" every time they have to
 *   Uses `PySide6` (or `Tkinter`) to spawn a borderless, always-on-top window in the center of the screen.
 *   Displays the drafted message and recipient with **[ Send ]** and **[ Cancel ]** buttons to ensure safety before dispatching.
 
+#### Overlay UI status: built (demo wiring)
+The overlay is implemented with the **Pette** spritesheet. Hotkey, voice, capture, LLM and dispatch are not wired yet. The "Ask" flow in `main.py` returns a canned, labeled **DEMO** proposal, and **Send** does nothing.
+
+```powershell
+py -m pip install -r requirements.txt
+py main.py
+```
+
+*   **Pet:** borderless, always-on-top, translucent window, bottom-right of the primary screen. Drag to move (kept inside the screen's available area). Click to ask; click a plain message to dismiss it.
+*   **Bubble:** sits above the pet and shows a title and message. A pending proposal shows **[ Send ]** and **[ Cancel ]** and never times out on its own. Approval is single-use and bound to the proposal ID, so a second click does nothing.
+*   **States:** `idle`, `thinking`, `speaking`, `sleeping` (paused). Each loops frames from the spritesheet at 15 FPS with a gentle bob.
+*   **Tray:** Ask Pette, Pause all, Bring to front, Quit. Pause drops any pending proposal, blocks new bubbles and puts Pette to sleep.
+*   **Integration API** (`pet/ui.py`): `overlay.propose(Proposal(...))`, `overlay.say(text)`, `overlay.set_state(...)`; signals `approved(id)`, `cancelled(id)`, `ask_requested`.
+
+**Assets:** `images/pette-spritesheet.png` has an opaque checkerboard baked in. `python tools/prep_sprites.py` (needs `Pillow` and `numpy`) removes it and writes `assets/pette_sheet.png`, a transparent 3x2 sheet that the app loads. Frame order is in `pet/sprites.py`.
+
+**Checked:** an offscreen Qt smoke test for single-use approval, pause behavior and layout. **Not yet checked:** on-screen run on Windows, multi-monitor behavior, real fonts, packaging.
+
 ### 6. Module 5: Dispatch Connectors
 *   Simple API wrappers to dispatch the approved message.
 *   Uses Slack Webhooks, Discord Webhooks, or basic SMTP/Gmail integrations for the demo.
