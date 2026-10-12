@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         self._show_ocr(res.observation)
         self.chart.set_distribution(res.suggestion.distribution, chosen_label(res))
         self._show_suggestion(res)
-        if self.bridge.state == "Capturing":
+        if not self.bridge.paused:
             image = self.frame_tap.latest(res.frame_version) if self.frame_tap is not None else None
             self.debug.show_frame(image, res.observation)
 

@@ -43,9 +43,11 @@ SchedulerFactory = Callable[[Any, float, Callable[[Any], None]], SchedulerLike]
 
 
 def default_scheduler_factory(runtime: Any, interval_s: float,
-                              on_result: Callable[[Any], None]) -> SchedulerLike:
+                              on_result: Callable[[Any], None],
+                              on_error: Callable[[BaseException], None] | None = None,
+                              ) -> SchedulerLike:
     from soma.runtime.scheduler import InferenceScheduler
-    return InferenceScheduler(runtime, interval_s, on_result)
+    return InferenceScheduler(runtime, interval_s, on_result, on_error=on_error)
 
 
 class RuntimeBridge(QObject):
@@ -112,7 +114,12 @@ class RuntimeBridge(QObject):
         if self._runtime is None or self._scheduler is not None:
             return
         self._paused = False
-        self._scheduler = self._factory(self._runtime, self._interval, self.on_worker_result)
+        if self._factory is default_scheduler_factory:
+            self._scheduler = self._factory(self._runtime, self._interval, self.on_worker_result,
+                                            on_error=lambda exc: self.on_worker_error(
+                                                f"{type(exc).__name__}: {exc}"))
+        else:
+            self._scheduler = self._factory(self._runtime, self._interval, self.on_worker_result)
         self._scheduler.start()
         self.state_changed.emit(self.state)
 
