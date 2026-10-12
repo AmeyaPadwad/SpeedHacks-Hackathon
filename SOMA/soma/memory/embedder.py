@@ -158,7 +158,7 @@ class ImageEmbedder(nn.Module):
         if arr.ndim == 2:
             arr = np.stack([arr] * 3, axis=-1)
         arr = arr[..., :3]
-        x = torch.from_numpy(np.ascontiguousarray(arr)).float()
+        x = torch.from_numpy(np.array(arr, dtype=np.float32, copy=True))
         if arr.dtype == np.uint8 or x.max() > 1.0:
             x = x / 255.0
         x = x.permute(2, 0, 1).unsqueeze(0)
