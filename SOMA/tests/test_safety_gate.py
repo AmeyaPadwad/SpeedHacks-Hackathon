@@ -204,3 +204,67 @@ def test_abstain_wins_on_typical_uncertain_scores(gate):
         logits = rng.normal(0, 0.5, size=4)
         spoke += not gate.decide(logits, [explain(), ask(), ask()], obs(), record=False).is_silent
     assert spoke == 0
+
+
+# ---------------------------------------------------------------- end to end (M3 scripted scenario)
+
+
+def test_scripted_scenario_generator_encoder_gate_ledger(small_cfg):
+    from soma.policy import (
+        ApprovalLedger,
+        CandidateEncoder,
+        NoExecutorError,
+        SafetyGate,
+        generate_candidates,
+    )
+
+    lines = ["Traceback (most recent call last):",
+             '  File "src/app/calc.py", line 40, in divide',
+             ERR]
+    screen = ScreenObservation(
+        window=WindowInfo("Code.exe", "calc.py"),
+        elements=[OCRElement(t, (0.05, 0.1 + 0.05 * i, 0.7, 0.14 + 0.05 * i)) for i, t in enumerate(lines)],
+        version=11)
+    pref = RetrievedMemory(MemoryItem("pref", SourceType.PREFERENCE, True,
+                                      "prefers inspecting tracebacks before changing code"),
+                           np.ones(8, np.float32), 0.9)
+    authorized = lambda p: p.startswith("src/")  # noqa: E731
+    cands = generate_candidates(screen, [pref], small_cfg.max_candidates, authorized)
+    blocked = SafetyGate.blocked_mask(cands, authorized_file=authorized, memories_by_id={"pref": pref})
+    assert not any(blocked)
+
+    enc = CandidateEncoder.from_config(small_cfg, memory_dim=8)
+    emb, types, mask = enc.encode(cands, {"pref": pref}, A=small_cfg.max_candidates, blocked=blocked)
+    assert emb.shape == (small_cfg.max_candidates, small_cfg.d_model)
+
+    # stand-in scorer: favour the preference-shaped next step, mask pads with -inf
+    logits = torch.full((1, small_cfg.max_candidates + 1), float("-inf"))
+    logits[0, 0] = 0.0
+    for i, c in enumerate(cands):
+        logits[0, i + 1] = 3.0 if c.action is ActionType.SUGGEST_NEXT_STEP else -1.0
+    logits[0, 1:][mask] = float("-inf")
+
+    clock = FakeClock()
+    gate = SafetyGate(PolicyConfig(), clock=clock)
+    s = gate.decide(logits, cands, screen)
+    assert s.candidate is not None
+    assert s.candidate.text == "Inspect the traceback at src/app/calc.py:40 before editing"
+    assert s.screen_version == 11
+
+    # dismissed: not repeated even after the cooldown
+    gate.record_dismissed(s.candidate.key)
+    clock.advance(PolicyConfig().cooldown_s + 1)
+    assert gate.decide(logits, cands, screen).candidate is None or \
+        gate.decide(logits, cands, screen).candidate.key != s.candidate.key
+
+    # idle screen: nothing to say
+    idle = ScreenObservation(window=WindowInfo("Code.exe", "x"), elements=[OCRElement("def f():", BOX)], version=12)
+    assert gate.decide([1.0], generate_candidates(idle, [pref], 4, authorized), idle).is_silent
+
+    # accepting the suggestion never executes anything in v0.1
+    ledger = ApprovalLedger()
+    req = ledger.propose(s)
+    tok = ledger.approve(req.id, user_confirmed=True)
+    with pytest.raises(NoExecutorError):
+        ledger.request_execution(req.id, token=tok.token, current_version=11)
+    assert ledger.unapproved_execution_count == 0
