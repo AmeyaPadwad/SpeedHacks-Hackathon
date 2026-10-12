@@ -173,3 +173,13 @@ def test_export_viewer_and_correct(tmp_path):
     import pytest
     with pytest.raises(KeyError):
         correct(s, idx, te, "missing", "x")
+
+
+def test_in_memory_store_keeps_derived_files_out_of_cwd():
+    from pathlib import Path
+
+    s = MemoryStore(":memory:")
+    s.upsert_item(_item())
+    assert s.get_item("m1") is not None
+    assert not str(s.derived_dir.resolve()).startswith(str(Path.cwd().resolve()))
+    s.close()

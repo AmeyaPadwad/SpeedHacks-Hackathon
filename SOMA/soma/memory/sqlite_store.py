@@ -18,6 +18,7 @@ import json
 import os
 import sqlite3
 import stat
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,7 +143,8 @@ class MemoryStore:
             self.derived_dir = p.parent / f"{p.stem}_derived"
         else:
             created = False
-            self.derived_dir = Path(os.devnull).parent / "soma_derived_unused"
+            # Never write derived files into the working directory for an in-memory store.
+            self.derived_dir = Path(tempfile.gettempdir()) / f"soma_derived_{new_id()}"
         self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
