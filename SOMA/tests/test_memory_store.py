@@ -135,3 +135,41 @@ def test_concurrent_writes(tmp_path):
     for t in threads:
         t.join()
     assert s.count_items() == 80
+
+
+# ---------------------------------------------------------------- export / viewer / correct
+
+
+def test_export_viewer_and_correct(tmp_path):
+    import json
+
+    import numpy as np
+
+    from soma.memory.embedder import TextEmbedder
+    from soma.memory.export import correct, export_memories, list_for_viewer
+    from soma.memory.vector_index import VectorIndex
+
+    te = TextEmbedder(dim=32, vocab_size=512)
+    s = MemoryStore(tmp_path / "m.sqlite")
+    idx = VectorIndex(32, path=tmp_path / "i.npz")
+    s.upsert_item(_item("m1", text_summary="wrong fact"))
+    idx.add("m1", te.embed_text("wrong fact"))
+    s.add_feedback(FeedbackEvent("sug_1", FeedbackOutcome.EDITED, context_ref="m1"))
+
+    out = tmp_path / "export" / "memories.json"
+    assert export_memories(s, out) == 1
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["memories"][0]["text_summary"] == "wrong fact"
+    assert "embedding" not in json.dumps(data["memories"][0]).replace("embedding_ref", "")
+    assert data["feedback"][0]["outcome"] == "edited"
+
+    rows = list_for_viewer(s)
+    assert rows[0]["id"] == "m1" and rows[0]["summary"] == "wrong fact"
+
+    fixed = correct(s, idx, te, "m1", "right fact")
+    assert fixed.text_summary == "right fact" and "corrected_at" in fixed.provenance
+    np.testing.assert_allclose(idx.get("m1"), te.embed_text("right fact"), atol=1e-6)
+    assert "m1" in VectorIndex.load(tmp_path / "i.npz")
+    import pytest
+    with pytest.raises(KeyError):
+        correct(s, idx, te, "missing", "x")
