@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+# Local runtime data: never commit personal memory, checkpoints or captures
+data/
+runs/
+checkpoints/
+*.sqlite
+*.db
+*.pt
+*.safetensors
