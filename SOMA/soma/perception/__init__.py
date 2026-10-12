@@ -15,6 +15,7 @@ from soma.perception.ocr import (
 from soma.perception.preprocess import LetterboxTransform, change_ratio, frame_to_tensor
 from soma.perception.screen_parser import (
     FileRef,
+    draw_observation,
     find_buttons,
     find_errors,
     find_file_refs,
@@ -31,7 +32,7 @@ __all__ = [
     "frame_to_tensor", "change_ratio", "LetterboxTransform",
     "OCREngine", "RapidOCREngine", "SyntheticOCREngine", "NullOCREngine", "FallbackOCREngine",
     "OCRUnavailableError", "get_ocr_engine", "rapidocr_available",
-    "parse_screen", "find_errors", "find_file_refs", "find_buttons", "FileRef",
+    "parse_screen", "draw_observation", "find_errors", "find_file_refs", "find_buttons", "FileRef",
     "to_pixels", "to_normalized", "window_to_screen", "screen_to_window", "iou",
     "observation_to_tensors", "batch_observations", "app_bucket",
     "SCENARIOS", "render_scenario", "expected_action", "ground_truth_for",

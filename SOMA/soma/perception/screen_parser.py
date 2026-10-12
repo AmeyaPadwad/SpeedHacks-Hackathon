@@ -299,3 +299,35 @@ def find_file_refs(obs: ScreenObservation) -> list[FileRef]:
 def find_buttons(obs: ScreenObservation) -> list[OCRElement]:
     """Elements with a button-like role."""
     return [e for e in obs.elements if e.ui_role in ("button", "link", "menuitem", "tab")]
+
+
+# ----------------------------------------------------------------- debug overlay
+
+ROLE_COLORS: dict[str, tuple[int, int, int]] = {
+    "error": (230, 60, 60),
+    "warning": (230, 160, 40),
+    "file_ref": (60, 160, 230),
+    "button": (60, 200, 110),
+    "link": (150, 110, 230),
+}
+_DEFAULT_COLOR = (200, 200, 200)
+
+
+def draw_observation(image: np.ndarray, obs: ScreenObservation, labels: bool = False) -> np.ndarray:
+    """Debug overlay: a copy of ``image`` with each element's box outlined by role.
+
+    For local inspection only; the result is never persisted by SOMA. With
+    ``labels`` the role name is drawn above each box (not the recognized text).
+    """
+    from PIL import Image, ImageDraw
+
+    canvas = Image.fromarray(np.ascontiguousarray(np.asarray(image)[:, :, :3]).astype(np.uint8))
+    draw = ImageDraw.Draw(canvas)
+    size = canvas.size
+    for e in obs.elements:
+        x0, y0, x1, y1 = to_pixels(e.bbox_xyxy_normalized, size)
+        color = ROLE_COLORS.get(e.ui_role or "", _DEFAULT_COLOR)
+        draw.rectangle((x0, y0, max(x0, x1 - 1), max(y0, y1 - 1)), outline=color, width=2)
+        if labels and e.ui_role:
+            draw.text((x0, max(0, y0 - 11)), e.ui_role, fill=color)
+    return np.asarray(canvas)

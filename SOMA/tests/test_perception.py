@@ -359,3 +359,17 @@ def test_capture_to_tensors_pipeline(small_cfg):
     assert x.shape == (3, small_cfg.image_size, small_cfg.image_size)
     ids, boxes, mask = observation_to_tensors(obs, small_cfg)
     assert ids.shape == (small_cfg.max_ocr_tokens,)
+
+
+def test_debug_overlay_draws_role_boxes_on_copy():
+    from soma.perception.screen_parser import ROLE_COLORS, draw_observation
+
+    frame, _ = frame_of("terminal_traceback", 1, (640, 400))
+    obs = parse_screen(frame, SyntheticOCREngine().recognize(frame.image))
+    before = np.array(frame.image)
+    out = draw_observation(frame.image, obs, labels=True)
+    assert out.shape == before.shape and np.array_equal(np.asarray(frame.image), before)
+    err = find_errors(obs)[0]
+    from soma.perception.screen_parser import to_pixels
+    x0, y0, _, _ = to_pixels(err.bbox_xyxy_normalized, (640, 400))
+    assert tuple(out[y0 + 1, x0 + 1]) == ROLE_COLORS["error"] or tuple(out[y0, x0]) == ROLE_COLORS["error"]
