@@ -213,3 +213,30 @@ def test_real_runtime_with_slow_ocr_runs_off_thread_and_records_latency():
     assert got[0].timings_ms["ocr"] >= 250
     lat = rt.telemetry.export()["latency_ms"]
     assert lat["ocr"]["p50_ms"] >= 250 and lat["total"]["p95_ms"] >= lat["ocr"]["p50_ms"]
+
+
+def test_telemetry_rates_percentiles_and_opt_in():
+    from soma.runtime.telemetry import Telemetry, percentile
+
+    assert percentile([], 50) == 0.0 and percentile([1, 2, 3, 4], 50) == 2.5
+    t = [0.0]
+    off = Telemetry(enabled=False, clock=lambda: t[0])
+    off.record_step({"total": 5.0}, silent=False)
+    assert off.export()["steps"] == 0                           # opt-in: nothing recorded
+    tel = Telemetry(enabled=True, idle_gap_s=120.0, clock=lambda: t[0])
+    for i in range(10):
+        t[0] += 60.0
+        tel.record_step({"ocr": 10.0 + i, "total": 20.0 + i, "secret_text": 1.0}, silent=i % 5 != 0)
+    tel.record_step({}, silent=True, skipped_reason="excluded:auth-prompt:sign in to bank")
+    out = tel.export()
+    assert out["processed"] == 10 and out["silent"] == 8 and out["suggestions"] == 2
+    assert out["silent_rate"] == 0.8
+    assert out["active_s"] == 540.0                             # 9 gaps of 60 s
+    assert abs(out["suggestions_per_active_hour"] - 2 / (540 / 3600)) < 1e-9
+    assert out["skipped"] == {"excluded": 1}                    # no title detail kept
+    assert "secret_text" not in out["latency_ms"] and out["latency_ms"]["ocr"]["n"] == 10
+    t[0] += 10_000                                              # long idle gap is capped
+    tel.record_step({"total": 1.0}, silent=True)
+    assert tel.export()["active_s"] == 660.0
+    tel.disable()
+    assert tel.export()["steps"] == 0 and tel.export()["latency_ms"] == {}
