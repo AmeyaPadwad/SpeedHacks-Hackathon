@@ -1,0 +1,62 @@
+[
+  {
+    "check": "Environment",
+    "status": "INFO",
+    "detail": "Windows 11 (10.0.26200), Python 3.13.9, PySide6 6.8.3, OpenCV 5.0.0, MediaPipe 1.1.0, openai 2.46.0"
+  },
+  {
+    "check": "Unit + integration tests",
+    "status": "PASS",
+    "detail": "106/106 passed, 0 failed, 0 errors, 0 skipped in 30.4s"
+  },
+  {
+    "check": "MediaPipe models",
+    "status": "PASS",
+    "detail": "face + hand landmarker present"
+  },
+  {
+    "check": "Webcam: face / eyes / hands (live)",
+    "status": "PASS",
+    "detail": "106 frames in 4s, face in 106/106, hand in 0/106, open-eye blink score avg 0.25 (closed threshold 0.6); camera released"
+  },
+  {
+    "check": "Foreground app detection",
+    "status": "PASS",
+    "detail": "foreground = Code.exe -> show Pette"
+  },
+  {
+    "check": "VS Code bridge snapshot",
+    "status": "SKIP",
+    "detail": "no snapshot at ~/.flowstate_current.json (extension not installed or no file open)"
+  },
+  {
+    "check": "db cache + world model",
+    "status": "PASS",
+    "detail": "write -> learn -> read round trip in a temp db"
+  },
+  {
+    "check": "Groq (qwen/qwen3.8-27b / whisper-large-v3-turbo)",
+    "status": "PASS",
+    "detail": "1-token request succeeded"
+  },
+  {
+    "check": "ElevenLabs transcription",
+    "status": "FAIL",
+    "detail": "live mode, 6.1s: \u201cThe dashboard bug is fixed.\u201d (42% of words). The agent's spoken greeting swallows the start of the command: clear 'First message' in the ElevenLabs agent, or set ELEVENLABS_API_KEY for Scribe"
+  },
+  {
+    "check": "Slack webhook",
+    "status": "SKIP",
+    "detail": "configured; live post skipped (run with --webhooks)"
+  },
+  {
+    "check": "Discord webhook",
+    "status": "SKIP",
+    "detail": "configured; live post skipped (run with --webhooks)"
+  },
+  {
+    "check": "UI states (screenshots)",
+    "status": "PASS",
+    "detail": "10/10 states rendered on the real display -> test_results/ui_states.png"
+  }
+]

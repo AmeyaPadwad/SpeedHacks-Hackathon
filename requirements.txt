@@ -5,3 +5,8 @@ keyboard>=0.13.5
 SpeechRecognition>=3.10
 pyaudio>=0.2.14
 python-dotenv>=1.0
+g4f
+numpy
+opencv-contrib-python>=4.11
+mediapipe>=0.10.21
+websockets>=13
