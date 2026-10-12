@@ -257,8 +257,9 @@ class SomaRuntime:
 
     def resume(self) -> None:
         self.consent.resume()
-        if self.capturer is not None:
-            self.capturer.reset()
+        reset = getattr(self.capturer, "reset", None)
+        if callable(reset):
+            reset()
         with self._lock:
             self._paused = False
 
@@ -302,8 +303,8 @@ class SomaRuntime:
             frame = self.capturer.capture(force=force)
             capture_ms = (time.perf_counter() - t0) * 1000.0
             if frame is None:
-                reason = self.capturer.last_skip_reason or "no-frame"
-                return self._skipped(reason, t0, window=self.capturer.last_window,
+                reason = getattr(self.capturer, "last_skip_reason", "") or "no-frame"
+                return self._skipped(reason, t0, window=getattr(self.capturer, "last_window", None),
                                      timings={"capture": capture_ms})
             try:
                 return self._process(frame, t0, capture_ms)
@@ -330,7 +331,8 @@ class SomaRuntime:
     def _process(self, frame: ScreenFrame, t0: float, capture_ms: float) -> StepResult:
         reason = self._gate_frame(frame)
         if reason is not None:
-            return self._skipped(reason, t0, window=frame.window, timings={"capture": capture_ms})
+            return self._skipped(reason, t0, window=frame.window, timings={"capture": capture_ms},
+                                 version=frame.version)
         gen = self._gen
         prepared = self.prepare(frame)
         prepared.timings_ms["capture"] = capture_ms
@@ -350,7 +352,8 @@ class SomaRuntime:
 
         if gen != self._gen or self.paused:
             # paused while computing: drop the result, record nothing as shown
-            return self._skipped(SKIP_STALE, t0, window=prepared.window)
+            return self._skipped(SKIP_STALE, t0, window=prepared.window,
+                                 version=prepared.frame_version)
 
         if not suggestion.is_silent:
             self._remember_shown(suggestion, prepared)
@@ -371,10 +374,11 @@ class SomaRuntime:
         return result
 
     def _skipped(self, reason: str, t0: float, window: WindowInfo | None = None,
-                 timings: dict[str, float] | None = None) -> StepResult:
+                 timings: dict[str, float] | None = None, version: int | None = None) -> StepResult:
         # Only the app name of a skipped window is kept; titles of excluded windows may be sensitive.
         win = WindowInfo(app_name=window.app_name, title="") if window is not None else neutral_window()
-        version = self.capturer.version if self.capturer is not None else self._last_version
+        if version is None:
+            version = int(getattr(self.capturer, "version", self._last_version) or 0)
         tm = {k: 0.0 for k in ("capture", "ocr", "parse", "encode", "retrieve", "policy", "gate")}
         tm.update(timings or {})
         tm["total"] = (time.perf_counter() - t0) * 1000.0
