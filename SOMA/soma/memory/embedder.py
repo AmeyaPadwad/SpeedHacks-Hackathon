@@ -50,9 +50,10 @@ class TextEmbedder(nn.Module):
         self.vocab_size = vocab_size
         self.max_features = max_features
         self.seed = seed
-        self.bag = nn.EmbeddingBag(vocab_size, self._dim, mode="mean")
-        self.proj = nn.Linear(self._dim, self._dim)
-        self.norm = nn.LayerNorm(self._dim)
+        with torch.random.fork_rng(devices=[]):   # default inits must not touch global RNG
+            self.bag = nn.EmbeddingBag(vocab_size, self._dim, mode="mean")
+            self.proj = nn.Linear(self._dim, self._dim)
+            self.norm = nn.LayerNorm(self._dim)
         self.reset_parameters()
         self.eval()
 
@@ -111,17 +112,18 @@ class ImageEmbedder(nn.Module):
         self.seed = seed
         self.pretrained = pretrained
         self.backbone: nn.Module | None = None
-        if pretrained:
-            self.backbone, feat = self._load_pretrained()
-        else:
-            self.trunk = nn.Sequential(
-                nn.Conv2d(3, 32, 3, stride=2, padding=1), nn.GELU(),
-                nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.GELU(),
-                nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.GELU(),
-            )
-            feat = 128 * 2  # mean + max pooled
-        self.proj = nn.Linear(feat, self._dim)
-        self.norm = nn.LayerNorm(self._dim)
+        with torch.random.fork_rng(devices=[]):   # default inits must not touch global RNG
+            if pretrained:
+                self.backbone, feat = self._load_pretrained()
+            else:
+                self.trunk = nn.Sequential(
+                    nn.Conv2d(3, 32, 3, stride=2, padding=1), nn.GELU(),
+                    nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.GELU(),
+                    nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.GELU(),
+                )
+                feat = 128 * 2  # mean + max pooled
+            self.proj = nn.Linear(feat, self._dim)
+            self.norm = nn.LayerNorm(self._dim)
         self.reset_parameters()
         self.eval()
 
