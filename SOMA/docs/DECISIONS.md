@@ -40,3 +40,39 @@ ablation, benchmarked rather than assumed.
 SQLite holds metadata, provenance and feedback, and a vector index holds
 embeddings. Permission filtering happens before vector scoring, so blocked items
 are never scored at all. Deletion purges rows, vectors and derived files.
+
+## D9. Retrieval query lives in the TextEmbedder space
+The vector index is built with `TextEmbedder`, so the runtime builds its query by
+embedding the redacted app name, title and OCR text with that same embedder,
+not with `SomaModel.query_embedding`. Setting `TextEmbedder(dim=d_model)` makes
+retrieved vectors feed straight into memory fusion. A learned alignment
+(contrastive retrieval loss, `lambda_retrieval > 0`) waits for real retrieval
+supervision.
+
+## D10. One screen encode per frame
+The runtime calls `encode_screen` once per frame and reuses that state for
+history, temporal, memory fusion and the policy. A test checks that this
+equals `model(batch)`.
+
+## D11. Pause is a hard boundary
+Pause revokes capture at once through `ConsentManager`, clears the rolling
+history and bumps a generation counter. The runtime drops any result computed
+across a pause, and such a result is never recorded as shown.
+
+## D12. Feedback labels
+Accept means the shown candidate (weight 1.0) and edit means the shown
+candidate (weight 0.5). Reject is labelled NO_SUGGESTION (weight 0.5) and
+dismisses the key in the gate. Ignored is stored as ambiguous and is never a
+negative. Training snapshots have their pixels zeroed.
+
+## D13. Replay ratio 3:1 for continual updates
+With feedback and replay mixed 1:1, the synthetic forgetting check failed
+(about 0.21 drop on prior competencies) and the gate rolled back. Using 3x
+replay kept forgetting within tolerance. Training only the policy head, or
+fusion plus policy, also forgot more than training all parameters with replay.
+
+## D14. Retrieval always returns top-k (known limitation)
+`Retriever.retrieve` has no minimum-relevance floor, so a
+COMPARE_WITH_PRIOR_WORK candidate exists on most screens and the policy has to
+learn to abstain. This keeps the decision in the learnable ranker, but a
+calibrated relevance floor is a candidate M5 experiment.
