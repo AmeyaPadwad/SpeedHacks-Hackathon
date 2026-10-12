@@ -33,6 +33,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Iterable, Iterator, Sequence
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -397,32 +398,76 @@ def run_adaptation(budget: AblationBudget, base_cfg: ModelConfig | None = None) 
     return rows
 
 
-def run_ablations(groups: Sequence[str] = GROUPS, budget: AblationBudget | None = None,
-                  base_cfg: ModelConfig | None = None) -> dict[str, Any]:
-    """Run the selected ablation groups; returns ``{notice, budget, rows}``."""
-    budget = budget or AblationBudget()
-    unknown = set(groups) - set(GROUPS)
-    if unknown:
-        raise ValueError(f"unknown ablation groups {sorted(unknown)}; choose from {GROUPS}")
+_AGG_KEYS = REPORT_KEYS + ("prior_top1", "train_s")
+
+
+def _run_once(groups: Sequence[str], budget: AblationBudget,
+              base_cfg: ModelConfig | None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for spec in ABLATIONS:
         if spec.group in groups:
             rows.append(run_variant(spec, budget, base_cfg))
     if "adaptation" in groups:
         rows.extend(run_adaptation(budget, base_cfg))
+    return rows
+
+
+def aggregate_rows(per_seed: Sequence[Sequence[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Mean and population std per (group, variant) across seeds (``<metric>_std``)."""
+    out: list[dict[str, Any]] = []
+    for i, first in enumerate(per_seed[0]):
+        runs = [rows[i] for rows in per_seed]
+        row = {"group": first["group"], "variant": first["variant"], "note": first["note"],
+               "n_seeds": len(runs)}
+        for k in _AGG_KEYS:
+            if k in first:
+                v = np.asarray([r[k] for r in runs], dtype=np.float64)
+                row[k], row[f"{k}_std"] = float(v.mean()), float(v.std())
+        out.append(row)
+    return out
+
+
+def run_ablations(groups: Sequence[str] = GROUPS, budget: AblationBudget | None = None,
+                  base_cfg: ModelConfig | None = None,
+                  seeds: Sequence[int] | None = None) -> dict[str, Any]:
+    """Run the selected ablation groups; returns ``{notice, budget, rows}``.
+
+    With ``seeds`` every variant is trained once per training seed (the eval
+    set stays fixed at ``budget.eval_seed``) and rows hold the mean plus a
+    ``<metric>_std`` entry; ``per_seed`` keeps the raw rows.
+    """
+    budget = budget or AblationBudget()
+    unknown = set(groups) - set(GROUPS)
+    if unknown:
+        raise ValueError(f"unknown ablation groups {sorted(unknown)}; choose from {GROUPS}")
+    seeds = list(seeds) if seeds else [budget.seed]
+    per_seed = [_run_once(groups, replace(budget, seed=int(s)), base_cfg) for s in seeds]
+    rows = per_seed[0] if len(seeds) == 1 else aggregate_rows(per_seed)
     cfg = base_cfg or small_model_config()
-    return {"notice": SYNTHETIC_NOTICE, "data": "synthetic", "budget": asdict(budget),
-            "model_config": asdict(cfg), "rows": rows}
+    report = {"notice": SYNTHETIC_NOTICE, "data": "synthetic", "budget": asdict(budget),
+              "seeds": seeds, "model_config": asdict(cfg), "rows": rows}
+    if len(seeds) > 1:
+        report["per_seed"] = per_seed
+    return report
+
+
+def _fmt(row: dict[str, Any], key: str) -> str:
+    if key not in row:
+        return "-"
+    std = row.get(f"{key}_std")
+    return f"{row[key]:.3f}" if std is None else f"{row[key]:.3f} +/- {std:.3f}"
 
 
 def format_table(report: dict[str, Any]) -> str:
     """Markdown table of an :func:`run_ablations` report, headed by the synthetic notice."""
+    seeds = report.get("seeds", [])
     lines = [f"> {report['notice']}", "",
+             f"Training seeds: {seeds} (mean +/- std over seeds)" if len(seeds) > 1
+             else f"Training seed: {seeds[0] if seeds else report['budget']['seed']}", "",
              "| group | variant | top1 | unwanted rate | ECE | NLL | prior top1 | train s |",
              "|---|---|---|---|---|---|---|---|"]
     for r in report["rows"]:
-        prior = f"{r['prior_top1']:.3f}" if "prior_top1" in r else "-"
-        lines.append(f"| {r['group']} | {r['variant']} | {r['top1']:.3f} | "
-                     f"{r['unwanted_suggestion_rate']:.3f} | {r['ece']:.3f} | {r['nll']:.3f} | "
-                     f"{prior} | {r['train_s']:.1f} |")
+        lines.append(f"| {r['group']} | {r['variant']} | {_fmt(r, 'top1')} | "
+                     f"{_fmt(r, 'unwanted_suggestion_rate')} | {_fmt(r, 'ece')} | {_fmt(r, 'nll')} | "
+                     f"{_fmt(r, 'prior_top1')} | {r['train_s']:.1f} |")
     return "\n".join(lines)

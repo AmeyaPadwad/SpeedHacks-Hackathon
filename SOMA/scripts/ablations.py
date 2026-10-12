@@ -1,7 +1,7 @@
 """M5 one-variable-at-a-time ablations on SYNTHETIC data with the small model config.
 
     python -m scripts.ablations [--groups memory temporal ocr temporal_kind adaptation]
-                                [--n-train 1500] [--n-eval 500] [--epochs 6] [--seed 0]
+                                [--n-train 1500] [--n-eval 500] [--epochs 6] [--seed 0 | --seeds 0 1 2]
                                 [--json runs/ablations.json]
 
 Every variant trains from the same seed on the same budget and changes one
@@ -31,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int, default=d.batch_size)
     p.add_argument("--lr", type=float, default=d.lr)
     p.add_argument("--seed", type=int, default=d.seed)
+    p.add_argument("--seeds", type=int, nargs="+", default=None,
+                   help="several training seeds; report mean +/- std (overrides --seed)")
     p.add_argument("--eval-seed", type=int, default=d.eval_seed)
     p.add_argument("--json", default=None, help="write the report to this JSON file")
     return p
@@ -42,7 +44,7 @@ def main(argv: Sequence[str] | None = None) -> dict[str, Any]:
                             batch_size=args.batch_size, lr=args.lr, seed=args.seed,
                             eval_seed=args.eval_seed, n_personal=args.n_personal,
                             personal_epochs=args.epochs)
-    report = run_ablations(args.groups, budget)
+    report = run_ablations(args.groups, budget, seeds=args.seeds)
     print(format_table(report))
     if args.json:
         p = Path(args.json)
