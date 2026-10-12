@@ -68,7 +68,7 @@ function activate(context) {
     vscode.commands.registerCommand("flowstate.toggle", async () => {
       const on = !config().get("enabled");
       await config().update("enabled", on, vscode.ConfigurationTarget.Global);
-      vscode.window.showInformationMessage(`FlowState sharing ${on ? "on" : "off"}`);
+      vscode.window.showInformationMessage(`Pette sharing ${on ? "on" : "off"}`);
     })
   );
   schedule();

@@ -1,9 +1,9 @@
-# FlowState AI - The Context-Aware Voice Agent
+# Pette - The Context-Aware Voice Agent
 
-FlowState is a background desktop assistant designed for hackathons. It lives on your desktop as **Pette**, a small animated companion. You click Pette, say who to tell what, and she sends it: your message, a short summary of what you changed, and the code itself.
+**Pette** is a background desktop assistant designed for hackathons. She lives on your desktop as a small animated companion. You click Pette, say who to tell what, and she sends it: your message, a short summary of what you changed, and the code itself.
 
 ## The concept
-Developers lose their flow every time they switch windows to tell a teammate what they just changed. With FlowState you click once and speak. Pette reads the file you're working on and its uncommitted git changes, writes the update with Groq, and posts it to Slack, Discord or email with the code attached.
+Developers lose their flow every time they switch windows to tell a teammate what they just changed. With Pette you click once and speak. Pette reads the file you're working on and its uncommitted git changes, writes the update with Groq, and posts it to Slack, Discord or email with the code attached.
 
 ## The workflow
 There is one workflow:
@@ -72,7 +72,7 @@ py main.py --demo        # offline keyword drafter (labelled DEMO); dispatch sti
 py main.py --no-camera --no-world --always-show
 ```
 
-Settings load from `.env` in the repo root (see [.env.example](.env.example)); real environment variables take precedence.
+Settings load from `.env` in the repo root (see [.env.example](.env.example)); real environment variables take precedence. Setting names keep their `FLOWSTATE_` prefix (and the snapshot stays at `~/.flowstate_current.json`) so existing setups keep working.
 
 Pette appears bottom-right **only while VS Code or a terminal is in front**: Windows Terminal, PowerShell, cmd, Git Bash, WezTerm, Alacritty, Tabby, Hyper and Warp.
 - To show her everywhere, use `--always-show` or the tray toggle.
