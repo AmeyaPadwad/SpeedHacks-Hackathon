@@ -224,3 +224,77 @@ def test_text_length_capped():
 def test_is_suspicious_negative_cases():
     assert not is_suspicious("AssertionError: expected 3 got 4")
     assert not is_suspicious("Run tests with pytest -q")
+
+
+# ---------------------------------------------------------------- encoder
+
+from soma.policy.candidate_encoder import CandidateEncoder, action_index  # noqa: E402
+
+
+@pytest.fixture
+def encoder(small_cfg):
+    enc = CandidateEncoder.from_config(small_cfg, memory_dim=8)
+    enc.eval()
+    return enc
+
+
+def _sample_candidates() -> list[Candidate]:
+    mems = [mem("doc1", SourceType.DOCUMENT, "Q3 report draft")]
+    return generate_candidates(obs_of(*TRACEBACK), mems, 8, allow_src)
+
+
+def test_encoder_shapes_types_and_mask(encoder, small_cfg):
+    cands = _sample_candidates()[:3]
+    A, D = 5, small_cfg.d_model
+    emb, types, mask = encoder.encode(cands, {}, A=A, D=D)
+    assert emb.shape == (A, D) and types.shape == (A,) and mask.shape == (A,)
+    assert types.dtype == torch.long and mask.dtype == torch.bool
+    assert mask.tolist() == [False, False, False, True, True]
+    assert types[:3].tolist() == [action_index(c) for c in cands]
+    assert torch.all(emb[3:] == 0)
+    assert torch.isfinite(emb).all()
+
+
+def test_encoder_truncates_and_handles_empty(encoder, small_cfg):
+    cands = _sample_candidates()
+    emb, types, mask = encoder.encode(cands, {}, A=2, D=small_cfg.d_model)
+    assert emb.shape[0] == 2 and not mask.any()
+    emb, types, mask = encoder.encode([], {}, A=3, D=small_cfg.d_model)
+    assert mask.all() and torch.all(emb == 0) and torch.all(types == 0)
+
+
+def test_encoder_blocked_mask_and_bad_dim(encoder, small_cfg):
+    cands = _sample_candidates()[:2]
+    _, _, mask = encoder.encode(cands, {}, A=3, D=small_cfg.d_model, blocked=[True, False])
+    assert mask.tolist() == [True, False, True]
+    with pytest.raises(ValueError):
+        encoder.encode(cands, {}, A=3, D=small_cfg.d_model + 1)
+
+
+def test_encoder_memory_embedding_changes_output(encoder, small_cfg):
+    cand = Candidate(ActionType.COMPARE_WITH_PRIOR_WORK, "Compare with earlier doc", memory_ref="m1")
+    with torch.no_grad():
+        a, _, _ = encoder.encode([cand], {}, A=1)
+        b, _, _ = encoder.encode([cand], {"m1": np.full(20, 2.0, dtype=np.float32)}, A=1)  # longer than memory_dim
+        c, _, _ = encoder.encode([cand], {"m1": mem("m1", SourceType.DOCUMENT, "x")}, A=1)
+    assert not torch.allclose(a, b) and not torch.allclose(a, c)
+
+
+def test_encoder_deterministic_in_eval(encoder):
+    cands = _sample_candidates()
+    with torch.no_grad():
+        a = encoder.encode(cands, {}, A=8)[0]
+        b = encoder.encode(cands, {}, A=8)[0]
+    assert torch.equal(a, b)
+
+
+def test_encoder_batch_and_grad(small_cfg):
+    enc = CandidateEncoder.from_config(small_cfg)
+    batch = [_sample_candidates()[:2], _sample_candidates()[:4], []]
+    emb, types, mask = enc.encode_batch(batch, None, A=small_cfg.max_candidates)
+    assert emb.shape == (3, small_cfg.max_candidates, small_cfg.d_model)
+    assert types.shape == mask.shape == (3, small_cfg.max_candidates)
+    assert mask[2].all() and mask.sum(dim=1).tolist() == [2, 0, 4]
+    emb[~mask].sum().backward()
+    assert enc.type_embedding.weight.grad is not None
+    assert enc.text_bag.weight.grad is not None
