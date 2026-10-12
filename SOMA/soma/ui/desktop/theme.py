@@ -30,7 +30,7 @@ QPushButton {{ padding: 5px 12px; border: 1px solid {BORDER}; border-radius: 4px
 QPushButton:hover {{ border-color: {ACCENT}; }}
 QPushButton:disabled {{ color: {STALE}; background: {BACKGROUND}; }}
 QPushButton#primary {{ background: {ACCENT}; color: white; border-color: {ACCENT}; }}
-QPushButton#primary:disabled {{ background: {BORDER}; color: {MUTED}; }}
+QPushButton#primary:disabled {{ background: {BACKGROUND}; color: {MUTED}; border-color: {BORDER}; }}
 QPushButton#pause {{ font-size: 12pt; padding: 8px 20px; }}
 QTableWidget {{ background: {SURFACE}; gridline-color: {BORDER}; border: 1px solid {BORDER}; }}
 QHeaderView::section {{ background: {BACKGROUND}; border: none; border-bottom: 1px solid {BORDER};
