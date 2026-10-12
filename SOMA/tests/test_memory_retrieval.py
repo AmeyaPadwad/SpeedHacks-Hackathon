@@ -217,3 +217,40 @@ def test_to_tensors_padding():
     assert mask.tolist() == [False]
     with pytest.raises(ValueError):
         to_tensors(mems, K=2, D=DIM + 1)
+
+
+# ---------------------------------------------------------------- M2 acceptance
+
+
+def test_m2_acceptance_screen_query_block_and_delete(tmp_path, te):
+    """A screen-text query retrieves the relevant allowed memory, never a blocked
+    source, and deletion removes it from retrieval and the persisted index."""
+    from soma.memory.deletion import forget, verify_deleted
+
+    folder, consent, store, index, ing, ret = _env(tmp_path, te)
+    work, private = folder / "work", folder / "private"
+    work.mkdir()
+    private.mkdir()
+    (work / "flaky_tests.md").write_text(
+        "Flaky pytest failures: the traceback shows a timeout in test_api. Rerun with -x.",
+        encoding="utf-8")
+    (work / "meeting.md").write_text("Quarterly planning meeting agenda and budget.",
+                                     encoding="utf-8")
+    (private / "pytest_diary.md").write_text("pytest traceback private diary entry",
+                                             encoding="utf-8")
+    ing.ingest_folder(folder)
+    store.set_source_blocked(private)
+
+    screen_text = "FAILED tests/test_api.py::test_list - Traceback (most recent call last) pytest"
+    res = ret.retrieve(te.embed_text(screen_text), k=3)
+    names = [Path(r.item.source_uri).name for r in res]
+    assert names[0] == "flaky_tests.md"
+    assert "pytest_diary.md" not in names
+    assert ret.permission_violations == 0
+
+    top = res[0].item.id
+    forget(store, index, top)
+    assert verify_deleted(store, index, top)
+    again = [r.item.id for r in Retriever(store, VectorIndex.load(tmp_path / "idx.npz"), consent)
+             .retrieve(te.embed_text(screen_text), k=3)]
+    assert top not in again
