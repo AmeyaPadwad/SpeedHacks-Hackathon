@@ -88,7 +88,7 @@ def iou(a: Sequence[float], b: Sequence[float]) -> float:
 _ERROR_RES = [
     re.compile(r"^\s*Traceback\b"),
     re.compile(r"^\s*[A-Za-z_][\w.]*(?:Error|Exception|Warning)\s*(?::|$)"),
-    re.compile(r"\b(?:error|fatal|panic)\s*(?:\[\w+\])?\s*:", re.I),
+    re.compile(r"\b(?:error|fatal|panic)\s*(?:\[\w+\]|[A-Z]+\d+)?\s*:", re.I),
     re.compile(r"\bFAILED\b|^\s*FAIL\b|\bERROR\b"),
     re.compile(r"\b\d+\s*failed\b", re.I),
     re.compile(r"\bUncaught\s+\w*(?:Error|Exception)"),
