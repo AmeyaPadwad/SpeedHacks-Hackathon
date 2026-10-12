@@ -1,7 +1,7 @@
 {
   "name": "flowstate-context",
-  "displayName": "FlowState Context",
-  "description": "Writes the active file path, language, contents and selection to ~/.flowstate_current.json for the FlowState desktop agent.",
+  "displayName": "Pette Context",
+  "description": "Writes the active file path, language, contents and selection to ~/.flowstate_current.json for the Pette desktop agent.",
   "version": "0.1.0",
   "publisher": "flowstate",
   "license": "MIT",
@@ -10,12 +10,12 @@
   "main": "./extension.js",
   "contributes": {
     "configuration": {
-      "title": "FlowState",
+      "title": "Pette",
       "properties": {
         "flowstate.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Share the active editor's file with the FlowState desktop agent."
+          "description": "Share the active editor's file with the Pette desktop agent."
         },
         "flowstate.maxChars": {
           "type": "number",
@@ -25,7 +25,7 @@
       }
     },
     "commands": [
-      { "command": "flowstate.toggle", "title": "FlowState: Toggle sharing active file" }
+      { "command": "flowstate.toggle", "title": "Pette: Toggle sharing active file" }
     ]
   }
 }

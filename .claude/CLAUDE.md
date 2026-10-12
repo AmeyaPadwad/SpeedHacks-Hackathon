@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-`README.md` is the spec being built: **FlowState**, click Pette, speak, and she sends a Slack, Discord or email message with the code and a summary of what changed. It is shown on screen as the **Pette** sprite. All five README modules and the VS Code extension are implemented.
+`README.md` is the spec being built: **Pette** (formerly FlowState): click Pette, speak, and she sends a Slack, Discord or email message with the code and a summary of what changed. It is shown on screen as the **Pette** sprite. All five README modules and the VS Code extension are implemented.
 
 The computer-vision layer draws on the two `brainstorming/` specs:
 

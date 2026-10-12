@@ -1,4 +1,4 @@
-"""FlowState entry point: Pette overlay (bubble + camera orb + sprite), world-model window, tray, hotkey.
+"""Pette entry point: Pette overlay (bubble + camera orb + sprite), world-model window, tray, hotkey.
 
 One workflow: click Pette (or press the hotkey) -> speak -> your words in the bubble -> Groq drafts ->
 a short countdown with Cancel -> the message (with code + a summary of the changes) is dispatched.
@@ -27,7 +27,7 @@ from pet.worldview import WorldWindow  # noqa: E402
 
 
 def parse_args(argv=None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="FlowState voice agent")
+    ap = argparse.ArgumentParser(description="Pette voice agent")
     ap.add_argument("--no-voice", action="store_true", help="type commands instead of speaking them")
     ap.add_argument("--demo", action="store_true",
                     help="offline demo: typed commands and a keyword drafter (labeled DEMO); dispatch still runs")

@@ -151,7 +151,7 @@ class Pipeline(QObject):
         self.ctx = None
         if d.platform == "none":
             self._set("idle")
-            self.overlay.say(d.message, title=label or "FlowState", seconds=15)
+            self.overlay.say(d.message, title=label or "Pette", seconds=15)
             return
         learned = ""
         if self.world is not None and not PLATFORM_WORDS.search(self._command):
