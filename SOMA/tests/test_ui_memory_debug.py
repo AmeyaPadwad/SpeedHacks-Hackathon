@@ -95,3 +95,30 @@ def test_debug_overlay_without_frame_uses_layout(qapp):
     d = DebugOverlay()
     d.show_frame(None, obs)
     assert d.has_image and "layout only" in d.caption.text()
+
+
+def test_frame_tap_keeps_small_copy_and_delegates():
+    from soma.types import ScreenFrame, WindowInfo
+    from soma.ui.desktop.debug_overlay import FrameTap
+
+    class Cap:
+        last_skip_reason = "same"
+
+        def __init__(self):
+            self.v = 0
+
+        def capture(self, force=False):
+            self.v += 1
+            return ScreenFrame(image=np.zeros((1080, 1920, 3), np.uint8),
+                               window=WindowInfo("a", "b"), version=self.v)
+
+    tap = FrameTap(Cap())
+    assert tap.latest() is None
+    frame = tap.capture(force=True)
+    assert frame.version == 1
+    small = tap.latest(1)
+    assert small is not None and small.shape[1] <= MAX_W
+    assert tap.latest(2) is None
+    assert tap.last_skip_reason == "same"
+    tap.clear()
+    assert tap.latest() is None

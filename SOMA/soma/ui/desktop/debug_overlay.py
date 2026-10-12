@@ -97,3 +97,46 @@ class DebugOverlay(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
         self._rescale()
+
+
+class FrameTap:
+    """Wraps a capturer and keeps only a small downscaled copy of the latest frame.
+
+    Used solely for the debug tab. The copy lives in memory, is replaced on
+    every capture, and :meth:`clear` drops it (called on pause). Every other
+    attribute is delegated to the wrapped capturer.
+    """
+
+    def __init__(self, inner: Any, max_w: int = MAX_W) -> None:
+        import threading
+
+        self._inner = inner
+        self._max_w = max_w
+        self._lock = threading.Lock()
+        self._latest: tuple[int, np.ndarray] | None = None
+
+    def capture(self, *args: Any, **kwargs: Any) -> Any:
+        frame = self._inner.capture(*args, **kwargs)
+        if frame is not None:
+            small = downscale(frame.image, self._max_w)
+            if frame.redacted_regions:
+                from soma.capture import mask_regions
+                small = mask_regions(small, frame.redacted_regions)
+            with self._lock:
+                self._latest = (int(frame.version), small)
+        return frame
+
+    def latest(self, version: int | None = None) -> np.ndarray | None:
+        """The stored copy, optionally only if it matches ``version``."""
+        with self._lock:
+            if self._latest is None:
+                return None
+            v, img = self._latest
+            return img if version is None or v == int(version) else None
+
+    def clear(self) -> None:
+        with self._lock:
+            self._latest = None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
