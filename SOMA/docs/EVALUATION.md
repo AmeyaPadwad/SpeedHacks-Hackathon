@@ -172,5 +172,5 @@ unwanted-rate increase <= 0.05.
 ```
 tests/test_scripts_train_eval.py  5 passed  (~8 s)
 tests/test_ablations.py           8 passed  (~8 s)
-tests/test_m4_acceptance.py       2 passed  (~25 s, while another CPU job was running)
+tests/test_m4_acceptance.py       2 passed  (~10 s; ~25 s while another CPU job was running)
 ```
