@@ -72,7 +72,8 @@ def _mss_instance() -> Any:
     inst = getattr(_mss_local, "sct", None)
     if inst is None:
         import mss  # lazy: optional dependency
-        inst = mss.mss()
+        factory = getattr(mss, "MSS", None) or mss.mss
+        inst = factory()
         _mss_local.sct = inst
     return inst
 

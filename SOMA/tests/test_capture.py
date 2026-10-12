@@ -295,3 +295,16 @@ def test_accessibility_gates_and_unavailable_backend():
 
     assert read_accessibility(w, root_fn=boom) == []
     assert isinstance(read_accessibility(w), list)                     # real backend or []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real screen grab only exercised on Windows")
+def test_real_mss_grab_smoke(tmp_path, monkeypatch):
+    from soma.capture.screen import mss_grab
+
+    monkeypatch.chdir(tmp_path)
+    try:
+        img = mss_grab(WindowInfo("x", "y", bounds=(0, 0, 0, 0)))
+    except Exception as exc:  # headless CI / no display
+        pytest.skip(f"no display: {exc}")
+    assert img.dtype == np.uint8 and img.ndim == 3 and img.shape[2] == 3
+    assert list(tmp_path.iterdir()) == []
