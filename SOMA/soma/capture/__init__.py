@@ -1,0 +1,1 @@
+"""SOMA capture package."""
