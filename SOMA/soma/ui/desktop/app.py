@@ -45,10 +45,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def capture_granted(consent: ConsentManager) -> bool:
     """Screen capture granted, regardless of pause."""
-    state = getattr(consent, "_state", None)
-    if state is not None and hasattr(state, "granted"):
-        return Scope.SCREEN_CAPTURE in state.granted
-    return consent.allowed(Scope.SCREEN_CAPTURE)
+    return consent.is_granted(Scope.SCREEN_CAPTURE)
 
 
 def default_runtime_builder(cfg: SomaConfig, consent: ConsentManager, *, data_dir: Path,

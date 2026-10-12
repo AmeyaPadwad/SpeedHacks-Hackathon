@@ -115,10 +115,7 @@ class ConsentDialog(QDialog):
 
     def _granted(self) -> set[Scope]:
         """Current grants, including screen capture while paused (allowed() hides it)."""
-        state = getattr(self.consent, "_state", None)
-        if state is not None and hasattr(state, "granted"):
-            return set(state.granted)
-        return {s for s in Scope if self.consent.allowed(s)}
+        return set(self.consent.granted)
 
     def _folder_section(self) -> QWidget:
         w = QWidget()
