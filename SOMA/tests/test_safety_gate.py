@@ -254,8 +254,8 @@ def test_scripted_scenario_generator_encoder_gate_ledger(small_cfg):
     # dismissed: not repeated even after the cooldown
     gate.record_dismissed(s.candidate.key)
     clock.advance(PolicyConfig().cooldown_s + 1)
-    assert gate.decide(logits, cands, screen).candidate is None or \
-        gate.decide(logits, cands, screen).candidate.key != s.candidate.key
+    s2 = gate.decide(logits, cands, screen)
+    assert s2.candidate is None or s2.candidate.key != s.candidate.key
 
     # idle screen: nothing to say
     idle = ScreenObservation(window=WindowInfo("Code.exe", "x"), elements=[OCRElement("def f():", BOX)], version=12)
