@@ -64,3 +64,11 @@ def test_random_batch_shapes():
     b = random_batch(B=3, A=5, K=2)
     assert b.candidate_embeddings.shape == (3, 5, 64)
     assert b.batch_size == 3
+
+
+def test_granted_ignores_pause():
+    c = ConsentManager()
+    c.grant(Scope.SCREEN_CAPTURE)
+    c.pause()
+    assert c.is_granted(Scope.SCREEN_CAPTURE) and not c.allowed(Scope.SCREEN_CAPTURE)
+    assert Scope.SCREEN_CAPTURE in c.granted

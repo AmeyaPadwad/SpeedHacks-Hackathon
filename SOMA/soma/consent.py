@@ -52,6 +52,17 @@ class ConsentManager:
                 return False
             return scope in self._state.granted
 
+    def is_granted(self, scope: Scope) -> bool:
+        """True when ``scope`` was granted, ignoring pause (for settings UIs)."""
+        with self._lock:
+            return scope in self._state.granted
+
+    @property
+    def granted(self) -> frozenset[Scope]:
+        """All granted scopes, ignoring pause."""
+        with self._lock:
+            return frozenset(self._state.granted)
+
     def require(self, scope: Scope) -> None:
         if not self.allowed(scope):
             raise ConsentError(f"Consent for '{scope.value}' has not been granted.")
