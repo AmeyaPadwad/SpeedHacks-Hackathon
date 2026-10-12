@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
             return "Timings: –"
         keys = [k for k in STAGE_ORDER if k in p50] + sorted(k for k in p50 if k not in STAGE_ORDER)
         n = max(len(v) for v in self._timings.values())
-        return "P50 ms: " + " · ".join(f"{k} {p50[k]:.0f}" for k in keys) + f"  (n={n})"
+        return "P50 ms: " + " | ".join(f"{k} {p50[k]:.0f}" for k in keys) + f"  (n={n})"
 
     # ------------------------------------------------------------ feedback
     @Slot(str, object, object)
