@@ -200,3 +200,36 @@ def test_integration_with_real_runtime(qapp, tmp_path):
         assert desk.frame_tap.latest() is None
     finally:
         desk.shutdown()
+
+
+def test_real_scheduler_delivers_then_pause_drops(qapp, tmp_path):
+    pytest.importorskip("soma.runtime.scheduler")
+    import time
+
+    from soma.runtime.factory import build_runtime
+
+    consent = ConsentManager()
+    consent.grant(Scope.SCREEN_CAPTURE)
+    cfg = _small_cfg()
+    cfg.capture.min_interval_s = 0.05
+    desk = SomaDesktop(cfg, consent, data_dir=tmp_path, synthetic=True, with_tray=False,
+                       runtime_builder=lambda c, k, **kw: build_runtime(c, k, **kw))
+    got = []
+    desk.bridge.result.connect(got.append)
+    try:
+        desk.start()
+        deadline = time.monotonic() + 60
+        while not got and time.monotonic() < deadline:
+            QCoreApplication.processEvents()
+            time.sleep(0.02)
+        assert got, "no result from the real scheduler"
+        desk.bridge.pause()
+        n = len(got)
+        end = time.monotonic() + 0.5
+        while time.monotonic() < end:
+            QCoreApplication.processEvents()
+            time.sleep(0.02)
+        assert len(got) == n
+        assert desk.window.state == "Paused"
+    finally:
+        desk.shutdown()
