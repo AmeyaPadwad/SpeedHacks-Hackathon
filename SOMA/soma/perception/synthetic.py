@@ -274,7 +274,7 @@ def _editor(c: Canvas, x: _Ctx, with_error: bool) -> WindowInfo:
         c.text(side_w + c.fs, py + c.lh * 1.5, f"{x.file}:{x.line}:5: error: {etype}: {emsg.format(v=x.var)}",
                role="error", fill=c.theme.error)
         c.text(side_w + c.fs, py + c.lh * 2.6, f'"{x.var}" is possibly unbound  Pylance  [Ln {x.line}, Col 5]',
-               role="error", fill=c.theme.error)
+               role="warning", fill=c.theme.error)
     c.rect(0, c.h - status_h, c.w, c.h, fill=c.theme.accent)
     c.text(c.fs, c.h - status_h + (status_h - c.fs) / 3, f"Ln {x.line}, Col 5    UTF-8    Python",
            role="statusbar", fill=(255, 255, 255))
