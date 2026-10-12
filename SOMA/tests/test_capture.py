@@ -249,3 +249,49 @@ def test_clip_region():
     assert _clip_region((-7, -7, 1550, 926), virtual) == {"left": 0, "top": 0, "width": 1543, "height": 919}
     assert _clip_region((0, 0, 0, 0), virtual) is None
     assert _clip_region((5000, 0, 100, 100), virtual) is None
+
+
+# ----------------------------------------------------------------- accessibility
+
+from soma.capture.accessibility import SimpleNode, elements_from_tree, read_accessibility  # noqa: E402
+
+
+def _tree() -> SimpleNode:
+    return SimpleNode("Editor", "WindowControl", (100, 100, 1100, 900), [
+        SimpleNode("Run tests", "ButtonControl", (150, 120, 250, 150)),
+        SimpleNode("", "PaneControl", (100, 160, 1100, 900), [
+            SimpleNode("api_key=abc123", "TextControl", (120, 200, 600, 220)),
+            SimpleNode("Offscreen", "ButtonControl", (5000, 5000, 5100, 5050)),
+        ]),
+    ])
+
+
+def test_accessibility_tree_flattened_with_roles():
+    w = WindowInfo("Code.exe", "x", window_id="hwnd:1", bounds=(100, 100, 1000, 800))
+    els = elements_from_tree(_tree(), w, timestamp_ms=7)
+    by_text = {e.text: e for e in els}
+    assert "Offscreen" not in by_text
+    btn = by_text["Run tests"]
+    assert btn.source == "accessibility" and btn.ui_role == "button"
+    assert btn.bbox_xyxy_normalized == pytest.approx((0.05, 0.025, 0.15, 0.0625))
+    assert btn.window_id == "hwnd:1" and btn.timestamp_ms == 7
+    assert any(e.ui_role == "text" and "abc123" not in e.text for e in els)
+    assert by_text["Editor"].ui_role == "window"
+
+
+def test_accessibility_gates_and_unavailable_backend():
+    w = WindowInfo("Code.exe", "x", bounds=(100, 100, 1000, 800))
+    consent = ConsentManager()
+    assert read_accessibility(w, consent, root_fn=_tree) == []          # no consent
+    consent.grant(Scope.SCREEN_CAPTURE)
+    assert len(read_accessibility(w, consent, root_fn=_tree)) == 3
+    consent.pause()
+    assert read_accessibility(w, consent, root_fn=_tree) == []
+    assert read_accessibility(WindowInfo("1Password.exe", "v", bounds=(0, 0, 9, 9)),
+                              root_fn=_tree) == []
+
+    def boom():
+        raise RuntimeError("COM failure")
+
+    assert read_accessibility(w, root_fn=boom) == []
+    assert isinstance(read_accessibility(w), list)                     # real backend or []
