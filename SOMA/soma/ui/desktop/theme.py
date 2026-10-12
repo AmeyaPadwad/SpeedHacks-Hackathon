@@ -35,6 +35,9 @@ QPushButton#pause {{ font-size: 12pt; padding: 8px 20px; }}
 QTableWidget {{ background: {SURFACE}; gridline-color: {BORDER}; border: 1px solid {BORDER}; }}
 QHeaderView::section {{ background: {BACKGROUND}; border: none; border-bottom: 1px solid {BORDER};
                         padding: 4px; color: {MUTED}; }}
+QSplitter::handle {{ background: {BORDER}; }}
+QSplitter::handle:horizontal {{ width: 1px; margin: 0 6px; }}
+QLabel#section {{ color: {MUTED}; padding: 6px 2px 2px 2px; letter-spacing: 1px; }}
 QTabWidget::pane {{ border: 1px solid {BORDER}; background: {SURFACE}; }}
 """
 

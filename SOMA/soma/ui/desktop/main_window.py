@@ -76,6 +76,9 @@ class MainWindow(QMainWindow):
 
         # -- header: state + pause
         self.state_badge = QLabel("Off")
+        self.state_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.state_badge.setFixedHeight(24)
+        self.state_badge.setMinimumWidth(92)
         self.pause_btn = QPushButton("Pause")
         self.pause_btn.setObjectName("pause")
         self.pause_btn.setToolTip("Stop capturing immediately")
@@ -88,7 +91,7 @@ class MainWindow(QMainWindow):
         win_box.addWidget(self.app_label)
         win_box.addWidget(self.title_label)
         header = QHBoxLayout()
-        header.addWidget(self.state_badge)
+        header.addWidget(self.state_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         header.addLayout(win_box, 1)
         header.addWidget(self.perm_btn)
         header.addWidget(self.pause_btn)
@@ -164,7 +167,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _heading(text: str) -> QLabel:
         lab = QLabel(text.upper())
-        lab.setObjectName("muted")
+        lab.setObjectName("section")
         return lab
 
     # ------------------------------------------------------------ state
@@ -203,10 +206,10 @@ class MainWindow(QMainWindow):
         if res is None:
             return
         self._last_result = res
-        self._record_timings(res.timings_ms)
-        if res.skipped_reason:
+        if res.skipped_reason:              # skipped steps would drag P50 towards zero
             self.skip_label.setText(f"Skipped: {res.skipped_reason}")
             return
+        self._record_timings(res.timings_ms)
         self.skip_label.setText("")
         self._show_window(res.window)
         self._show_ocr(res.observation)
