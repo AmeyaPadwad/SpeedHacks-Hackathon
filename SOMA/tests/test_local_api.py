@@ -130,3 +130,25 @@ def test_unknown_routes_and_bad_bodies(env):
                  headers={"Authorization": f"Bearer {api.token}"})
     assert conn.getresponse().status == 400
     conn.close()
+
+
+def test_build_memory_script_requires_grant(tmp_path: Path):
+    import io
+
+    from scripts.build_memory import main
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    (folder / "a.md").write_text("Prefer pytest -x when tests fail", encoding="utf-8")
+    data = tmp_path / "data"
+    out = io.StringIO()
+    assert main(["--folder", str(folder), "--data-dir", str(data)], out) == 2
+    assert "--grant" in out.getvalue()
+    out = io.StringIO()
+    assert main(["--folder", str(folder), "--data-dir", str(data), "--grant", "--list"], out) == 0
+    assert "added=1" in out.getvalue() and "a.md" in out.getvalue()
+    mem_id = out.getvalue().split("memories\n", 1)[1].split()[0]
+    out = io.StringIO()
+    assert main(["--data-dir", str(data), "--export", str(tmp_path / "x.json"), "--forget", mem_id], out) == 0
+    assert "verified=True" in out.getvalue()
+    out = io.StringIO()
+    assert main(["--folder", str(Path.home()), "--data-dir", str(data), "--grant"], out) == 2
