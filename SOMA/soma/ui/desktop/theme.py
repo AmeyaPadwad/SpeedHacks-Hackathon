@@ -35,6 +35,8 @@ QPushButton#pause {{ font-size: 12pt; padding: 8px 20px; }}
 QTableWidget {{ background: {SURFACE}; gridline-color: {BORDER}; border: 1px solid {BORDER}; }}
 QHeaderView::section {{ background: {BACKGROUND}; border: none; border-bottom: 1px solid {BORDER};
                         padding: 4px; color: {MUTED}; }}
+QListWidget, QLineEdit {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER};
+                         border-radius: 4px; padding: 2px; }}
 QSplitter::handle {{ background: {BORDER}; }}
 QSplitter::handle:horizontal {{ width: 1px; margin: 0 6px; }}
 QLabel#section {{ color: {MUTED}; padding: 6px 2px 2px 2px; letter-spacing: 1px; }}
