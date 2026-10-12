@@ -24,7 +24,7 @@ import torch
 
 from soma.config import MemoryConfig
 from soma.consent import ConsentManager, Scope
-from soma.memory.sqlite_store import DEFAULT_TRUST, MemoryStore, parse_iso
+from soma.memory.sqlite_store import DEFAULT_TRUST, MemoryStore, parse_iso, path_within
 from soma.memory.vector_index import VectorIndex
 from soma.types import MemoryItem, RetrievedMemory, SourceType
 
@@ -70,15 +70,21 @@ class Retriever:
         self.last_allowed_count = 0
 
     # -- permissions
-    def is_permitted(self, item: MemoryItem, now: datetime | None = None) -> bool:
-        """Metadata-only ACL check for one item."""
+    def _blocked_roots(self) -> list[str]:
+        return [s["root"] for s in self.store.list_sources() if s["blocked"] or not s["allowed"]]
+
+    def is_permitted(self, item: MemoryItem, now: datetime | None = None,
+                     blocked_roots: list[str] | None = None) -> bool:
+        """Metadata-only ACL check for one item (``blocked_roots`` may be prefetched)."""
         now = _as_utc(now)
+        if blocked_roots is None:
+            blocked_roots = self._blocked_roots()
         if not item.user_approved:
             return False
         exp = parse_iso(item.expires_at)
         if exp is not None and exp <= now:
             return False
-        if item.source_uri and self.store.is_source_blocked(item.source_uri):
+        if item.source_uri and any(path_within(item.source_uri, r) for r in blocked_roots):
             return False
         st = SourceType(item.source_type)
         if st in FILE_TYPES:
@@ -91,7 +97,9 @@ class Retriever:
     def allowed_items(self, now: datetime | None = None) -> dict[str, MemoryItem]:
         """All items passing the ACL, with superseded conflicting memories removed."""
         now = _as_utc(now)
-        items = [i for i in self.store.list_items(approved_only=True) if self.is_permitted(i, now)]
+        blocked = self._blocked_roots()
+        items = [i for i in self.store.list_items(approved_only=True)
+                 if self.is_permitted(i, now, blocked)]
         winners: dict[str, MemoryItem] = {}
         for it in items:
             key = conflict_key(it)
@@ -142,11 +150,12 @@ class Retriever:
         if not allowed:
             return []
         hits = self.index.search(query_vec, k * self.oversample, allowed_ids=set(allowed))
+        blocked = self._blocked_roots()
         results: list[RetrievedMemory] = []
         for item_id, rel in hits:
             item = allowed.get(item_id)
             vec = self.index.get(item_id)
-            if item is None or vec is None or not self.is_permitted(item, now):
+            if item is None or vec is None or not self.is_permitted(item, now, blocked):
                 self.permission_violations += 1
                 continue
             results.append(RetrievedMemory(item=item, embedding=vec.astype(np.float32),
