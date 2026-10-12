@@ -71,3 +71,25 @@ def test_evaluate_warns_when_holdout_seed_equals_training_seed(trained):
     report = evaluate_script.run(out, 40, 0, device="cpu")
     assert report["holdout"]["same_seed_as_training"]
     assert "not a holdout" in evaluate_script.format_report(report)
+
+
+def test_benchmark_script_profiles_every_stage(tmp_path):
+    from scripts import benchmark
+    from soma.runtime.profiling import StageTimer, percentile
+
+    t = StageTimer()
+    for ms in (1.0, 2.0, 3.0, 4.0):
+        t.add("x", ms)
+    s = t.summary()["x"]
+    assert s["n"] == 4 and s["p50_ms"] == 2.5 and percentile([], 50) != percentile([], 50)
+
+    out = tmp_path / "bench.json"
+    report = benchmark.main(["--configs", "small", "--iters", "2", "--warmup", "1", "--memories", "50",
+                             "--no-rapidocr", "--json", str(out)])
+    stages = report["results"]["small"]["stages"]
+    for name in ("render", "ocr_synthetic", "parse", "visual_encode", "text_encode", "screen_fusion",
+                 "temporal", "retrieval_N50", "memory_fusion", "policy", "gate", "model_forward"):
+        assert stages[name]["n"] == 2 and stages[name]["p95_ms"] >= stages[name]["p50_ms"] >= 0
+    assert "ocr_rapidocr" not in stages
+    hw = json.loads(out.read_text(encoding="utf-8"))["hardware"]
+    assert {"cpu", "torch", "cuda_available"} <= set(hw)
