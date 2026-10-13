@@ -28,7 +28,7 @@ py -m pytest tests/test_pipeline.py::test_pause_drops_late_results -q   # single
 py tools/prep_sprites.py                # rebuild assets/pette_sheet.png (needs Pillow + numpy)
 py tools/sandbox.py [--demo] [--live-webhooks] [--real-ide]   # manual test panel around the real app
 ./run_pette_soma.sh [--diagnose] [pette flags]   # Git Bash: both venvs (uv), SOMA serve, then Pette --soma
-SOMA\.venv\Scripts\python.exe -m pytest -q          # SOMA's own suite, run from SOMA/
+cd SOMA; .venv\Scripts\python.exe -m pytest -q    # SOMA's own suite
 ```
 
 Pette and SOMA use separate venvs (`.venv`, `SOMA/.venv`): mediapipe needs opencv-contrib and RapidOCR pulls opencv-python. They talk only over SOMA's localhost API.
