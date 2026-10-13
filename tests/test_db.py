@@ -108,3 +108,16 @@ def test_thread_safety(mem):
     for t in threads:
         t.join()
     assert store.counts()["events"] == 200
+
+
+def test_soma_suggestion_outcomes_show_as_a_rule(mem):
+    store, world, _ = mem
+    assert world.soma_counts() == {"shown": 0, "accepted": 0, "dismissed": 0, "ignored": 0}
+    assert not any("SOMA" in r["when"] for r in world.snapshot()["rules"])
+    for outcome in ("shown", "accepted", "shown", "dismissed", "shown", "ignored"):
+        store.log_offer("soma:share_changes", outcome)
+    store.log_offer("proactive", "accepted")                      # other offers don't count
+    snap = world.snapshot()
+    assert snap["soma"] == {"shown": 3, "accepted": 1, "dismissed": 1, "ignored": 1}
+    rule = next(r for r in snap["rules"] if "SOMA" in r["when"])
+    assert rule["why"] == "3 shown: 1 done, 1 not now, 1 ignored"

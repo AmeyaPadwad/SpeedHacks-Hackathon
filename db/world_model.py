@@ -120,6 +120,12 @@ class WorldModel:
         return "\n".join(lines)
 
     # --- UI ---------------------------------------------------------------
+    def soma_counts(self) -> dict[str, int]:
+        """SOMA suggestion outcomes (pet/soma.py logs `offers` rows with kind 'soma:<template>')."""
+        rows = self.store.query("SELECT outcome, COUNT(*) FROM offers WHERE kind LIKE 'soma:%' GROUP BY outcome")
+        by = dict(rows)
+        return {k: by.get(k, 0) for k in ("shown", "accepted", "dismissed", "ignored")}
+
     def snapshot(self) -> dict:
         """Everything the world-model window shows: learned facts plus the behaviour each one drives."""
         counts = self.outcome_counts()
@@ -144,11 +150,17 @@ class WorldModel:
         rules.append({"when": "Your eyes look closed on camera", "then": f"blink score above {thr}",
                       "why": f"calibrated from {samples} open-eye samples" if thr != DEFAULT_BLINK_ON
                              else "default until the camera has seen enough open-eye frames"})
+        soma = self.soma_counts()
+        if soma["shown"]:
+            rules.append({"when": "SOMA sees a next step on your screen",
+                          "then": "Pette offers it as a card; nothing runs without “Do it”",
+                          "why": f"{soma['shown']} shown: {soma['accepted']} done, {soma['dismissed']} not now, "
+                                 f"{soma['ignored']} ignored"})
         recent = [{"ts": ts, "recipient": r.title(), "platform": p, "outcome": o} for ts, r, p, o in self.store.query(
             "SELECT ts, recipient, platform, outcome FROM messages ORDER BY ts DESC LIMIT 8")]
         events = [{"ts": ts, "kind": k} for ts, k in self.store.query(
             "SELECT ts, kind FROM events ORDER BY ts DESC LIMIT 8")]
         return {"contacts": contacts, "outcomes": counts, "send_rate": self.send_rate(), "send_delay_s": delay,
                 "blink_threshold": thr, "blink_calibrated": thr != DEFAULT_BLINK_ON, "baseline_samples": samples,
-                "presence": self.presence_today(), "rules": rules, "recent": recent, "events": events,
+                "presence": self.presence_today(), "rules": rules, "soma": soma, "recent": recent, "events": events,
                 "updated": self._clock()}

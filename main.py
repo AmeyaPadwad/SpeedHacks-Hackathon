@@ -17,7 +17,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from db import Store, WorldModel  # noqa: E402
-from pet import eleven, llm, voice  # noqa: E402
+from pet import eleven, llm, soma, voice  # noqa: E402
 from pet.brain import OfflineBrain  # noqa: E402
 from pet.focus import FocusGate  # noqa: E402
 from pet.pipeline import Pipeline  # noqa: E402
@@ -36,6 +36,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--no-world", action="store_true", help="don't open the world-model window at launch")
     ap.add_argument("--always-show", action="store_true",
                     help="show Pette over every app, not only VS Code and terminals")
+    ap.add_argument("--soma", nargs="?", const="", default=None, metavar="ENDPOINT_FILE",
+                    help=f"show SOMA's on-screen action suggestions (endpoint file, default ${soma.ENDPOINT_VAR})")
     return ap.parse_args(argv)
 
 
@@ -105,7 +107,28 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
 
     overlay.pause_toggled.connect(on_pause)
 
+    overlay.add_menu_action(f"Hide / show camera view ({voice.CAMERA_HOTKEY.title()})",
+                            overlay.toggle_camera_view)
+
+    # Global hotkeys fire on the keyboard library's thread: they only emit signals (queued to the main thread).
     hotkey_ok = voice.register_hotkey(pipeline.hotkey_pressed.emit)
+    hotkeys = {voice.CAMERA_HOTKEY: overlay.camera_view_requested.emit,
+               voice.WORLD_HOTKEY: overlay.world_requested.emit}
+    suggester = None
+    if args.soma is not None or os.environ.get(soma.ENDPOINT_VAR):
+        suggester = soma.Suggester(overlay, pipeline, connect=lambda: soma.SomaClient.from_endpoint(args.soma or None),
+                                   memory=memory)
+        for window in (overlay, worldwin):   # SOMA must never OCR Pette's own bubble or panel
+            soma.exclude_from_capture(window)
+        soma_action = overlay.add_menu_action(f"SOMA suggestions ({voice.SOMA_HOTKEY.title()})",
+                                              suggester.set_enabled, checkable=True, checked=True)
+        if soma_action:
+            suggester.enabled_changed.connect(soma_action.setChecked)
+        hotkeys[voice.SOMA_HOTKEY] = suggester.toggle_requested.emit
+        suggester.start()
+        app.aboutToQuit.connect(suggester.stop)
+    for combo, emit in hotkeys.items():
+        voice.register_hotkey(emit, combo)
     app.aboutToQuit.connect(voice.unregister_hotkeys)
     app.aboutToQuit.connect(watcher.stop)
 
@@ -119,7 +142,8 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
             watcher.set_camera(True)
     if not args.no_world:
         worldwin.show_near()
-    how = f"Click me (or {voice.HOTKEY.title()}) and tell me what to send."
+    how = (f"Click me (or {voice.HOTKEY.title()}) and tell me what to send. "
+           f"{voice.CAMERA_HOTKEY.title()} hides the camera, {voice.WORLD_HOTKEY.title()} the world panel.")
     if args.demo:
         overlay.say(f"Demo mode: type commands, keyword drafter. {how}", title=OfflineBrain.label, seconds=8)
     elif not llm.configured():
@@ -130,7 +154,7 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
                     seconds=7)
     return SimpleNamespace(app=app, overlay=overlay, memory=memory, world=world, pipeline=pipeline,
                            watcher=watcher, gate=gate, camera_action=camera_action, worldwin=worldwin,
-                           settings=settings)
+                           settings=settings, suggester=suggester)
 
 
 def main(argv=None) -> int:

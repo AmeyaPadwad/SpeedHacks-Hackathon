@@ -88,12 +88,13 @@ def test_cancel_during_countdown_sends_nothing(make):
     assert sent == [] and p.pending == {} and states[-1] == "cancelled" and o.orb.label() == "Not sent"
 
 
-def test_pinch_cancels_a_pending_send(make):
+def test_pinch_sends_a_pending_draft_now(make):
     o, p, sent, _ = make()
     p.trigger()
+    o.pinch()                                   # pinch = Send now, single-use
     o.pinch()
     finish_countdown(p)
-    assert sent == [] and p.state == "cancelled"
+    assert len(sent) == 1 and p.state == "sent" and p.pending == {}
 
 
 def test_transcript_shows_in_bubble_before_groq(make):

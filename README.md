@@ -60,6 +60,36 @@ A panel docked beside Pette shows, live, what she has learned from her local db 
 
 The window is built with React, Tailwind and [shadcn/ui](https://ui.shadcn.com), with [Aceternity UI](https://ui.aceternity.com) effects (spotlight header, background-gradient card, moving-border status pill). Vite compiles it into one self-contained file, `pet/web/index.html`, which Qt WebEngine shows. The Qt overlay uses the same shadcn tokens, and the bubble gets a rotating gradient border while a send counts down.
 
+### SOMA: on-screen action suggestions
+[SOMA](SOMA/README.md) (in `SOMA/`, its own venv) watches the screen with your consent and ranks next steps with its own PyTorch model. With `--soma`, Pette shows its suggestions as a glass card while she is on screen and idle: **Do it** / **Not now**.
+
+```bash
+./run_pette_soma.sh              # Git Bash: sets up both venvs with uv, starts SOMA, then Pette
+./run_pette_soma.sh --demo       # extra flags go to Pette
+./run_pette_soma.sh --diagnose   # why SOMA would speak or stay silent on the current screen
+```
+
+| SOMA sees | Card | Do it |
+|---|---|---|
+| A file in your editor | *Send the team a summary of your changes to "app.py"* / *Ask a teammate to review "app.py"* | The normal draft + countdown (Cancel still works) |
+| A passing test run in a terminal | *Tell the team the tests pass* | Same |
+| An error | *Ask the team for help with the error on screen?*, *Explain the error "…"* | Draft to the team, or copy the text for your coding agent |
+| A web page (with `--always-show`) | *Search Darwin for tools related to "…"* | Darwin search |
+
+- Nothing runs without **Do it**. Accepted suggestions become fixed Pette commands, so screen text never reaches Groq. An unanswered card disappears after 15 s.
+- Accept / dismiss / ignore go back to SOMA (its online ranker learns your taste when SOMA's feedback storage is granted) and into Pette's db as facts (*kind, outcome*).
+- **Ctrl+Alt+S** or the tray turns suggestions off (SOMA stops capturing). **Pause all** pauses SOMA too.
+- Running the script is your opt-in for screen capture (stored in `SOMA/data/consent.json`). Screenshots stay in memory; password managers, private windows and sign-in prompts are skipped. Pette's own windows are excluded from capture.
+- `SOMA/configs/pette.yaml` lets SOMA's top-ranked candidate through. SOMA's default config wants 55 % confidence, which the untrained model never reaches (about 30 % per option), so it stayed silent on real screens. A 45 s cooldown and a 5-minute duplicate window keep cards rare.
+
+### Hotkeys
+| Keys | Action | Setting |
+|---|---|---|
+| Ctrl+Shift+Space | Talk (same as clicking Pette) | `FLOWSTATE_HOTKEY` |
+| Ctrl+Alt+C | Hide / show the camera orb (the camera keeps running, so pinch still works) | `PETTE_CAMERA_HOTKEY` |
+| Ctrl+Alt+W | Hide / show the world-model panel | `PETTE_WORLD_HOTKEY` |
+| Ctrl+Alt+S | SOMA suggestions on / off (with `--soma`) | `PETTE_SOMA_HOTKEY` |
+
 ## Quick start (Windows 11, Python 3.10+)
 
 ```powershell
@@ -103,6 +133,8 @@ The extension writes the active file's path, language, contents (first 12,000 ch
 | `FLOWSTATE_ACTIVE_FILE` | Active-file snapshot path, default `~/.flowstate_current.json`. |
 | `FLOWSTATE_SHOW_IN` | Comma-separated process names where Pette appears. |
 | `FLOWSTATE_DB` | Memory db path, default `db/pette_cache.sqlite3`. |
+| `PETTE_CAMERA_HOTKEY`, `PETTE_WORLD_HOTKEY`, `PETTE_SOMA_HOTKEY` | Hide the camera orb / the world panel, toggle SOMA suggestions. Defaults `ctrl+alt+c`, `ctrl+alt+w`, `ctrl+alt+s`. |
+| `PETTE_SOMA_ENDPOINT` | SOMA endpoint file (`{url, token}`, written by `SOMA/scripts/serve.py`). Set → suggestions on. |
 
 **Contacts** map spoken names to IDs, so messages @-mention real people:
 ```json
@@ -122,10 +154,11 @@ If a platform has no webhook or SMTP host, nothing is sent: the bubble says it i
 | AI brain | `pet/brain.py`, `pet/llm.py` | Groq JSON mode. The output must be exactly `{platform, recipient, subject, message}`, with platform `slack`, `discord`, `email` or `none`. `attach_code` adds the diff, selection or file locally. |
 | Darwin | `pet/darwin.py` | Darwin Search v3 → top matches as a Slack draft. Search only. |
 | Dispatch | `pet/dispatch.py` | Slack and Discord webhooks, plus SMTP. `compose()` fits the message and code into each platform's limit. Discord pings only the resolved contact. |
-| Overlay | `pet/ui.py`, `pet/sprites.py` | Pette, the camera orb (preview, hand skeleton, pinch chip, status ring), and the shadcn-styled bubble with the countdown. |
+| Overlay | `pet/ui.py`, `pet/sprites.py` | Pette, the camera orb (preview, hand skeleton, pinch chip, status ring), and the frosted-glass bubble with the countdown. |
 | Webcam | `pet/vision.py`, `pet/watcher.py` | MediaPipe face and hand tracking on a camera thread: debounced presence, eyes-closed and pinch events, plus the orb preview. |
 | World model | `db/`, `pet/worldview.py`, `web/` | SQLite fact log → explainable rules (`WorldModel.snapshot()`) → the React/shadcn window. |
 | Focus gate | `pet/focus.py` | Shows Pette only over VS Code and terminals. |
+| SOMA companion | `pet/soma.py`, `SOMA/` | Polls SOMA's localhost API, shows suggestion cards, maps accepted ones to Pette commands, sends feedback. |
 
 `agent.py` in the repo root is a standalone Groq drafting experiment and isn't used by the app.
 
@@ -133,6 +166,7 @@ If a platform has no webhook or SMTP host, nothing is sent: the bubble says it i
 - **Every send counts down** (2.5–6 s, set by the world model), with **Cancel** always available. Pause stops the countdown and drops the draft. A pinch sends only a draft that is already counting down.
 - The attached code comes from git and the editor, not from the model. The model can only pick an allowlisted platform. It never chooses URLs or mentions; mentions come from your contacts file.
 - File contents, diffs and audio stay in memory for one request. Camera frames are only drawn on screen. None of them are logged or written to disk. The db stores facts only (event names, timings, recipient, platform and outcome); see [db/README.md](db/README.md).
+- **SOMA suggestions never run by themselves.** Only **Do it** acts, accepted templates map to fixed commands, and the resulting draft still counts down.
 - **Rate caps:** at most one AI request every 3 seconds and 50 per session, with no automatic retries.
 - Data sent to Groq, ElevenLabs, Darwin, Slack, Discord or your SMTP server is subject to their terms.
 

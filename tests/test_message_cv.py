@@ -45,21 +45,22 @@ def finish(p):
         p._tick()
 
 
-def test_pinch_is_push_to_talk(rig):
+def test_pinch_while_idle_is_ignored(rig):
     o, p, w, *_ = rig
     w.on_vision_event(PINCH)
-    assert p.busy and o.bubble.asking                      # same as clicking Pette
+    assert not p.busy and not o.bubble.asking              # only clicking Pette / the hotkey starts listening
 
 
-def test_pinch_cancels_pending_send_and_never_sends(rig):
+def test_pinch_sends_pending_now_and_cancel_still_stops(rig):
     o, p, w, store, world, sent, _ = rig
-    w.on_vision_event(PINCH)
+    p.trigger()
     type_command(o, "Slack Sarah asking her to review the PR")
-    w.on_vision_event(PINCH)                               # cancel during the countdown
+    o.bubble.cancel.click()                                # Cancel during the countdown
     finish(p)
     assert sent == [] and p.state == "cancelled"
-    w.on_vision_event(PINCH)
+    p.trigger()
     type_command(o, "Slack Sarah saying the PR is merged")
+    w.on_vision_event(PINCH)                               # pinch = Send now
     finish(p)                                              # countdown runs out -> dispatched
     assert [d.message for d in sent] == ["Hi Sarah, the PR is merged. Thanks!"]
     assert store.query("SELECT outcome FROM messages ORDER BY ts") == [("drafted",), ("cancelled",), ("drafted",),

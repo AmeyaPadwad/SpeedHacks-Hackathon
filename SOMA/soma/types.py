@@ -168,12 +168,14 @@ class Candidate:
     file_ref: str | None = None                  # only authorized files
     evidence: list[str] = field(default_factory=list)
     id: str = field(default_factory=lambda: new_id("cand_"))
+    template: str = ""                           # context template id (soma.policy.context_candidates)
 
     @property
     def key(self) -> str:
         """Stable de-duplication key (action + target text + refs)."""
         tgt = self.target.text if self.target else ""
-        return f"{self.action.value}|{tgt}|{self.memory_ref or ''}|{self.file_ref or ''}"
+        key = f"{self.action.value}|{tgt}|{self.memory_ref or ''}|{self.file_ref or ''}"
+        return f"{key}|{self.template}" if self.template else key
 
 
 @dataclass

@@ -265,8 +265,8 @@ def ui_check(app):
     from pet.brain import OfflineBrain
     from pet.context import ActiveFile, Context
     from pet.pipeline import Pipeline
-    from pet.ui import Overlay
-    from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
+    from pet.ui import Overlay, Proposal
+    from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK
     from pet.watcher import Watcher
     from pet.worldview import WorldWindow
     import pet.pipeline as pp
@@ -312,16 +312,20 @@ def ui_check(app):
 
     steps = [
         ("idle, camera off", lambda: None),
-        ("camera: you + hand", lambda: camera("open hand")),
+        ("camera: you + hand", lambda: camera("")),
         ("away", lambda: w.on_vision_event(FACE_AWAY)),
         ("eyes closed", lambda: (w.on_vision_event(FACE_BACK), w.on_vision_event(EYES_CLOSED))),
-        ("pinch = talk", lambda: (w.on_vision_event(EYES_OPEN), camera("pinch"), w.on_vision_event(PINCH),
+        ("click = talk", lambda: (w.on_vision_event(EYES_OPEN), p.trigger(),
                                   o.bubble.input.setText("message Sarah what I changed"))),
-        ("draft + countdown", lambda: (camera("open hand"), o.bubble.primary.click())),
+        ("draft + countdown", lambda: (camera("pinch"), o.bubble.primary.click())),
         ("sent", tick_all),
         ("cancelled", lambda: (o.dismiss(), p.trigger(), o.bubble.input.setText("Slack Sarah the fix"),
                                o.bubble.primary.click(), o.bubble.cancel.click())),
-        ("paused", lambda: o.set_paused(True)),
+        ("SOMA suggestion (glass)", lambda: (o.dismiss(), camera(""), o.propose(Proposal(
+            "SOMA suggests · Next step", 'Send the team a summary of your changes to "dashboard.py"', "Do it",
+            cancel_label="Not now")))),
+        ("camera hidden (Ctrl+Alt+C)", lambda: (o.dismiss(), o.set_camera_visible(False))),
+        ("paused", lambda: (o.set_camera_visible(True), o.set_paused(True))),
     ]
     done = {"v": False}
 
@@ -350,7 +354,7 @@ def ui_check(app):
     store.close()
 
     for i, (name, pm) in enumerate(shots, 1):
-        pm.save(str(SHOTS / f"{i:02d}_{name.split(' ')[0].replace(',', '')}.png"))
+        pm.save(str(SHOTS / f"{i:02d}_{re.sub(r'\W', '',name.split(' ')[0]).lower()}.png"))
     pad, cap = 14, 26
     cols = 5
     rows = [shots[i:i + cols] for i in range(0, len(shots), cols)]

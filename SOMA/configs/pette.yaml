@@ -1,0 +1,36 @@
+# SOMA as Pette's on-screen companion (scripts/serve.py, run_pette_soma.sh).
+#
+# dev.yaml is tuned for a trained model: the gate wants p >= 0.55 before it speaks.
+# Until there is a checkpoint trained on real, consented sessions, the untrained
+# model spreads its probability over NO_SUGGESTION and the candidates (about 0.3
+# each), so dev.yaml stays silent on every real screen. This config:
+#   * adds app-context next steps (soma/policy/context_candidates.py), so editors,
+#     terminals and browsers have candidates at all;
+#   * lets the model's best-ranked candidate through (low threshold, abstain does
+#     not veto), and relies on the cooldown + duplicate window to keep
+#     interruptions rare. Dismissals still suppress a suggestion, and accept /
+#     dismiss feedback trains the online ranker when feedback storage is granted.
+# Nothing is executed: Pette shows the suggestion and only acts if you accept it.
+device: auto
+model:
+  d_model: 256
+  n_heads: 8
+  image_size: 448
+  patch_size: 32
+  vision_backbone: scratch
+  temporal_kind: gru
+capture:
+  min_interval_s: 2.0
+  persist_screenshots: false
+memory:
+  db_path: data/soma_memory.sqlite
+  index_path: data/soma_index.npz
+  top_k: 8
+policy:
+  relevance_threshold: 0.1
+  margin_over_abstain: -1.0
+  cooldown_s: 45
+  duplicate_window_s: 300
+  context_templates: true
+  # chat and mail apps are where you'd act on a suggestion; never interrupt there
+  quiet_apps: [slack.exe, discord.exe, ms-teams.exe, teams.exe, outlook.exe, olk.exe]

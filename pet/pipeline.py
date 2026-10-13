@@ -115,6 +115,14 @@ class Pipeline(QObject):
         self._set("listening", "typing")   # typed fallback keeps the same workflow
         self.overlay.ask_text(f"{e} Type your command instead:")
 
+    def run_command(self, command: str) -> bool:
+        """Run a command as if it had been said (e.g. an accepted SOMA suggestion). False if Pette is busy,
+        paused or hidden. The draft still goes through the countdown, so Cancel can stop it."""
+        if not self._can_start():
+            return False
+        self._heard(command)
+        return True
+
     # --- 2. transcript -> Groq --------------------------------------------
     def _rate_ok(self) -> bool:
         now = time.monotonic()

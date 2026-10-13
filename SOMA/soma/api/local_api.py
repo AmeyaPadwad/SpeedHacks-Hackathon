@@ -80,7 +80,7 @@ def suggestion_payload(runtime: Any) -> dict[str, Any]:
         c = s.candidate
         out.update(action=c.action.value, text=c.text, evidence=list(c.evidence),
                    target_box=list(c.target.bbox_xyxy_normalized) if c.target else None,
-                   memory_ref=c.memory_ref)
+                   memory_ref=c.memory_ref, template=c.template)
     return out
 
 

@@ -66,6 +66,7 @@ class PolicyConfig:
     cooldown_s: float = 30.0
     duplicate_window_s: float = 600.0
     quiet_apps: list[str] = field(default_factory=list)
+    context_templates: bool = False    # add app-context next steps (soma.policy.context_candidates)
 
 
 @dataclass

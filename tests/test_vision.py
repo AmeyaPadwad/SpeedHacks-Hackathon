@@ -87,10 +87,10 @@ def hand(extended=(True, True, True, True), pinch=False):
 
 def test_gesture_names():
     from pet.vision import gesture_name
-    assert gesture_name(hand()) == "open hand"
-    assert gesture_name(hand((False,) * 4)) == "fist"
-    assert gesture_name(hand((True, False, False, False))) == "point"
-    assert gesture_name(hand((True, True, False, False))) == "peace"
+    # pinch is the only gesture; every other hand shape reports nothing
+    assert gesture_name(hand()) == ""
+    assert gesture_name(hand((False,) * 4)) == ""
+    assert gesture_name(hand((True, False, False, False))) == ""
     assert gesture_name(hand(pinch=True)) == "pinch"
     assert gesture_name(None) == ""
 
@@ -106,4 +106,4 @@ def test_preview_is_small_mirrored_and_owns_its_pixels(qapp):
     assert (img.width(), img.height()) == (168, 168)
     assert img.pixelColor(150, 84).red() == 255 and img.pixelColor(10, 84).red() == 0   # mirrored
     assert len(out["hand"]) == 21 and all(0 <= x <= 1.2 and 0 <= y <= 1 for x, y in out["hand"])
-    assert out["gesture"] == "open hand"
+    assert out["gesture"] == ""
