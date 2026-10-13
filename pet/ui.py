@@ -25,7 +25,7 @@ from .sprites import ANIMATIONS, SpriteSheet
 BG, FG, MUTED, BORDER, RING = "#ffffff", "#09090b", "#71717a", "#e4e4e7", "#18181b"
 SECONDARY = "#f4f4f5"
 # Glass (frosted, translucent) bubble: alpha 0..255 for the fill's top/bottom, the sheen and the edges.
-GLASS_TOP, GLASS_BOTTOM, GLASS_SHEEN, GLASS_EDGE, GLASS_HAIRLINE = 150, 105, 110, 190, 34
+GLASS_TOP, GLASS_BOTTOM, GLASS_SHEEN, GLASS_EDGE, GLASS_HAIRLINE = 182, 142, 110, 190, 34
 FONT ="'Inter', 'Segoe UI Variable Text', 'Segoe UI', sans-serif"
 # status -> (ring colour, label)
 STATUS = {
@@ -258,7 +258,7 @@ class Bubble(QWidget):
         self.setFixedWidth(320)
         self.setStyleSheet(f"""
             QLabel {{ color: {FG}; font-family: {FONT}; background: transparent; }}
-            QLabel#title {{ font-size: 12px; font-weight: 600; color: {MUTED}; letter-spacing: 0.2px; }}
+            QLabel#title {{ font-size: 12px; font-weight: 600; color: #3f3f46; letter-spacing: 0.2px; }}
             QLabel#body {{ font-size: 14px; }}
             QPushButton {{ font-family: {FONT}; font-size: 13px; font-weight: 500; padding: 6px 12px;
                           border-radius: 8px; border: 1px solid rgba(255, 255, 255, 170);
