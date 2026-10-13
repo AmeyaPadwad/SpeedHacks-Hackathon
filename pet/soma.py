@@ -233,6 +233,7 @@ class Suggester(QObject):
                      action_label="Do it" if acting else "Copy", cancel_label="Not now")
         self.shown[p.id] = s
         self._card = p.id
+        self.overlay.set_status("idle")             # don't leave a stale "Not sent" under the card
         self.overlay.propose(p)
         self._expire.start()
         self._log(s, "shown")

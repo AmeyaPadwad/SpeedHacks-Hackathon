@@ -84,6 +84,7 @@ def test_suggestion_card_then_do_it_runs_the_pette_workflow(rig):
     deliver(sug())
     assert o.bubble.proposal.title == "SOMA suggests · Next step"
     assert o.bubble.primary.text() == "Do it" and o.bubble.cancel.text() == "Not now"
+    assert o.orb.label() == ""                                     # ring reset: no stale status pill
     assert sent == [] and brain.commands == []                     # nothing runs on its own
     o.bubble.primary.click()
     assert brain.commands == [soma.COMMANDS["share_changes"]]      # fixed text, no screen content
