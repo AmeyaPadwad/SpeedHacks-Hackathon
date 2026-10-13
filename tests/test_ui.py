@@ -108,3 +108,18 @@ def test_bubble_hidden_with_pette_outside_allowed_apps(qapp):
     o.set_context_allowed(True)
     assert o.bar.isVisible()
     o.close()
+
+
+def test_wrapped_card_is_not_cut_off(qapp):
+    from pet.ui import Proposal
+    o = Overlay(tray=False)
+    o.show()
+    o.propose(Proposal("SOMA suggests · Next step", "Review your changes to \"calc.py\" before you commit " * 4,
+                       "Copy", cancel_label="Not now"))
+    b = o.bubble
+    need = b.layout().totalHeightForWidth(b.width())
+    assert b.height() >= need and o.bar.height() >= b.height()
+    assert b.primary.geometry().bottom() < b.height()                 # the button is inside the card
+    o.say("short", seconds=None)
+    assert b.height() < need                                          # shrinks back for a short message
+    o.close()

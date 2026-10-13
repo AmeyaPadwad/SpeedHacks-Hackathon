@@ -431,8 +431,11 @@ class BubbleBar(QWidget):
     def reanchor(self, change, visible: bool):
         """Apply a bubble change, resize, and dock bottom-centre; show only when there is something to say."""
         change()
-        self.bubble.adjustSize()
-        self.adjustSize()
+        b = self.bubble                           # wrapped text: size by height-for-width, not the 1-line hint
+        h = b.layout().totalHeightForWidth(b.width()) if b.layout().hasHeightForWidth() else b.sizeHint().height()
+        b.setFixedHeight(max(h, b.minimumSizeHint().height()))
+        m = self.layout().contentsMargins()
+        self.resize(b.width() + m.left() + m.right(), b.height() + m.top() + m.bottom())
         owner = self.parentWidget()                # Pette's window: dock on her screen, never cover her
         screen = QGuiApplication.screenAt(owner.geometry().center()) if owner is not None else None
         a = (screen or QGuiApplication.primaryScreen()).availableGeometry()
