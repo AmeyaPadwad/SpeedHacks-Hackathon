@@ -14,7 +14,9 @@
 #
 # Env: SOMA_CONFIG (default configs/pette.yaml), SOMA_CHECKPOINT, SOMA_INTERVAL (s, default 2),
 #      SOMA_SYNTHETIC=1 (synthetic screens instead of yours), SKIP_SETUP=1 (don't touch the venvs).
-# Hotkeys: Ctrl+Shift+Space look now, Ctrl+Alt+S suggestions on/off, Ctrl+Alt+C camera, Ctrl+Alt+W world panel.
+# Hotkeys: Ctrl+Shift+Space look now, Ctrl+Alt+S suggestions on/off, Ctrl+Alt+B speech bubble on/off,
+#          Ctrl+Alt+C camera picture, Ctrl+Alt+W world panel.
+# Gestures: pinch = Do it; in a browser, point left/right = previous/next tab, pinch + drag = scroll.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
