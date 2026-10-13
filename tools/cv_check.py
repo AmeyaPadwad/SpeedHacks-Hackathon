@@ -1,4 +1,5 @@
-"""Live webcam check for Pette's CV signals: preview, raw scores vs thresholds, events, and Pette's reaction.
+"""Live webcam check for Pette's CV signals and gestures: preview, raw scores vs thresholds, events
+(pinch, point left/right, pinch-and-drag scroll) and Pette's reaction. It never sends keys or scrolls.
 
 Local only: frames are shown in this window and never saved or sent anywhere.
 Run: py tools/cv_check.py   (close the window or press Esc to stop and release the camera)
@@ -17,12 +18,13 @@ from PySide6.QtGui import QFont, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPlainTextEdit, QVBoxLayout, QWidget
 
 from pet.ui import Orb
-from pet.vision import (EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, FACE_MODEL, HAND_MODEL, PINCH, Observation,
-                        VisionPolicy, blink_scores, pinch_ratio)
+from pet.vision import (DRAG_END, DRAG_START, EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, FACE_MODEL, HAND_MODEL,
+                        PINCH, POINT_LEFT, POINT_RIGHT, Observation, VisionPolicy, blink_scores, pinch_ratio,
+                        pinch_y, pointing)
 
 
 class Loop(QThread):
-    frame = Signal(QImage, object, list)   # preview, Observation, events
+    frame = Signal(QImage, object, list, float)   # preview, Observation, events, scroll since last frame
 
     def run(self):
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
@@ -50,15 +52,16 @@ class Loop(QThread):
                 has_face = bool(fr.face_landmarks)
                 bl, br = blink_scores(fr.face_blendshapes[0]) if has_face and fr.face_blendshapes else (0.0, 0.0)
                 hl = hr.hand_landmarks[0] if hr.hand_landmarks else None
-                o = Observation(start, has_face, bl, br, pinch_ratio(hl))
+                o = Observation(start, has_face, bl, br, pinch_ratio(hl), pinch_y(hl), pointing(hl))
                 events = policy.update(o)
+                dy = policy.take_scroll()
                 h, w = rgb.shape[:2]
                 if hl:  # draw thumb and index tips so the pinch is visible
                     for i in (4, 8):
                         cv2.circle(rgb, (int(hl[i].x * w), int(hl[i].y * h)), 7, (124, 242, 196), -1)
                 rgb = cv2.flip(rgb, 1)   # mirror, like a selfie view
                 q = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
-                self.frame.emit(q, o, events)
+                self.frame.emit(q, o, events, dy)
                 time.sleep(max(0.0, 0.1 - (time.monotonic() - start)))
         finally:
             cap.release()
@@ -104,9 +107,11 @@ class Window(QWidget):
         self.loop = Loop()
         self.loop.frame.connect(self.on_frame)
         self.loop.start()
-        self.log.appendPlainText("Try: look away/leave for 3s · close both eyes ~0.5s · pinch thumb+index ~0.5s")
+        self.scrolled = 0.0
+        self.log.appendPlainText("Try: look away/leave for 3s · close both eyes ~0.5s · pinch thumb+index ~0.5s · "
+                                 "point your index finger left/right · pinch and move your hand up/down")
 
-    def on_frame(self, q: QImage, o: Observation, events: list):
+    def on_frame(self, q: QImage, o: Observation, events: list, dy: float = 0.0):
         self.preview.setPixmap(QPixmap.fromImage(q))
         p = VisionPolicy
         pr = "no hand" if o.pinch_ratio is None else bar(o.pinch_ratio, p.PINCH_ON, invert=True)
@@ -114,11 +119,21 @@ class Window(QWidget):
             f"face        {'YES' if o.face else 'no'}\n"
             f"blink L     {bar(o.blink_left, p.BLINK_ON)}\n"
             f"blink R     {bar(o.blink_right, p.BLINK_ON)}\n"
-            f"pinch ratio {pr}\n\n"
+            f"pinch ratio {pr}\n"
+            f"pointing    {o.point or '-'}\n"
+            f"scrolled    {self.scrolled:+.2f} image heights (this drag)\n\n"
             f"closed > {p.BLINK_ON} (both, {p.BLINK_HOLD_S}s) · pinch < {p.PINCH_ON} ({p.PINCH_HOLD_S}s)\n"
             f"away after {p.AWAY_AFTER_S:.0f}s without a face")
+        self.scrolled += dy
         for ev in events:
             self.log.appendPlainText(f"{o.t - self.t0:7.1f}s  {ev}")
+            if ev == DRAG_START:
+                self.scrolled = dy
+            elif ev == DRAG_END:
+                self.log.appendPlainText(f"{'':9}scrolled {self.scrolled:+.2f} image heights "
+                                         f"({'down' if self.scrolled < 0 else 'up'} in a browser)")
+            elif ev in (POINT_LEFT, POINT_RIGHT):
+                self.status.setText(f"Pette: {'previous' if ev == POINT_LEFT else 'next'} tab (in a browser)")
             if ev in (FACE_AWAY, FACE_BACK):
                 self.away = ev == FACE_AWAY
             elif ev in (EYES_CLOSED, EYES_OPEN):
