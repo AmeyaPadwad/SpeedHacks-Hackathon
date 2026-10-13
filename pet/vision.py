@@ -1,9 +1,14 @@
-"""Webcam CV (local only): face presence, eye closure and pinch -> debounced events, plus a small
-preview (mirrored 168px crop, hand points, gesture name) for the orb above Pette.
+"""Webcam CV (local only): face presence, eye closure and hand gestures -> debounced events, plus a small
+preview (mirrored 168px crop, hand points, gesture name) for the orb.
+
+Gestures (all pure logic in `VisionPolicy`, so they're unit-tested without a camera):
+  * pinch (thumb to index) held still ~0.5 s       -> PINCH ("Do it" on a SOMA card)
+  * pinch, then move the hand                      -> DRAG_START, scroll amounts, DRAG_END (browser scroll)
+  * index finger pointing to your left / right     -> POINT_LEFT / POINT_RIGHT (previous / next browser tab)
+Left and right are from your point of view, the same as in the mirrored preview on the orb.
 
 Nothing leaves this PC: the preview is only painted on screen, never stored, logged or uploaded.
-Gestures are explicit UI controls and never approve actions. Eye closure is a heuristic,
-not gaze, attention or emotion measurement.
+Eye closure is a heuristic, not gaze, attention or emotion measurement.
 """
 import math
 import time
@@ -22,16 +27,20 @@ MAX_FPS = 15
 FACE_AWAY, FACE_BACK = "face_away", "face_back"
 EYES_CLOSED, EYES_OPEN = "eyes_closed", "eyes_open"
 PINCH = "pinch"
+POINT_LEFT, POINT_RIGHT = "point_left", "point_right"
+DRAG_START, DRAG_END = "drag_start", "drag_end"
 
 
 @dataclass
 class Observation:
-    """One processed frame. `pinch_ratio` is None when no usable hand was found."""
+    """One processed frame. Hand fields are None when no usable hand was found."""
     t: float                      # monotonic seconds
     face: bool
     blink_left: float = 0.0
     blink_right: float = 0.0
     pinch_ratio: float | None = None
+    pinch_y: float | None = None  # vertical position of the pinch (0 top .. 1 bottom of the camera image)
+    point: str | None = None      # "left" / "right" (your point of view) while the index finger points sideways
 
 
 class VisionPolicy:
@@ -39,6 +48,9 @@ class VisionPolicy:
     AWAY_AFTER_S, BACK_AFTER_S = 3.0, 1.0
     BLINK_ON, BLINK_OFF, BLINK_HOLD_S = 0.6, 0.4, 0.3
     PINCH_ON, PINCH_REARM, PINCH_HOLD_S, PINCH_COOLDOWN_S = 0.25, 0.4, 0.5, 2.0
+    DRAG_START_DY = 0.04          # pinch moves this far (fraction of image height) -> it's a drag, not a pinch
+    DRAG_SMOOTH = 0.5             # EMA on the pinch position; less jitter in the scroll
+    POINT_HOLD_S, POINT_COOLDOWN_S = 0.25, 0.6
 
     def __init__(self, blink_on: float | None = None):
         if blink_on is not None:  # calibrated per user by the world model; reopen stays 0.2 below
@@ -51,6 +63,19 @@ class VisionPolicy:
         self._pinch_since: float | None = None
         self._pinch_armed = True
         self._last_pinch = -math.inf
+        self.dragging = False
+        self._pinch_start_y: float | None = None   # where this pinch began (smoothed)
+        self._pinch_y: float | None = None         # smoothed current pinch position
+        self._scroll = 0.0                         # pending scroll (image heights; + = hand moved down)
+        self._point: str | None = None
+        self._point_since: float | None = None
+        self._point_armed = True
+        self._last_point = -math.inf
+
+    def take_scroll(self) -> float:
+        """Scroll accumulated since the last call, in image heights (+ = the hand moved down)."""
+        dy, self._scroll = self._scroll, 0.0
+        return dy
 
     def update(self, o: Observation) -> list[str]:
         events: list[str] = []
@@ -85,21 +110,63 @@ class VisionPolicy:
                 self._blink_since = None
                 events.append(EYES_OPEN)
 
-        # Pinch: held below threshold, must rearm above a higher one, plus a cooldown.
-        r = o.pinch_ratio
-        if r is None:
-            self._pinch_since = None
-        elif r > self.PINCH_REARM:
-            self._pinch_armed = True
-            self._pinch_since = None
-        elif r < self.PINCH_ON and self._pinch_armed:
-            self._pinch_since = self._pinch_since if self._pinch_since is not None else o.t
-            if o.t - self._pinch_since >= self.PINCH_HOLD_S and o.t - self._last_pinch >= self.PINCH_COOLDOWN_S:
-                events.append(PINCH)
-                self._last_pinch = o.t
-                self._pinch_armed = False
-                self._pinch_since = None
+        events += self._pinch_and_drag(o)
+        events += self._pointing(o)
         return events
+
+    def _end_drag(self) -> list[str]:
+        was = self.dragging
+        self.dragging = False
+        self._pinch_start_y = self._pinch_y = None
+        return [DRAG_END] if was else []
+
+    def _pinch_and_drag(self, o: Observation) -> list[str]:
+        """Pinch held still -> PINCH (needs rearm + cooldown). Pinch that moves -> a drag that scrolls."""
+        r = o.pinch_ratio
+        if r is None or r > self.PINCH_REARM:          # hand gone or fingers apart: pinch / drag over
+            if r is not None:
+                self._pinch_armed = True
+            self._pinch_since = None
+            return self._end_drag()
+        if r >= self.PINCH_ON:                         # between thresholds: keep whatever is going on
+            return []
+        events: list[str] = []
+        if o.pinch_y is not None:
+            prev = self._pinch_y
+            self._pinch_y = o.pinch_y if prev is None else prev + self.DRAG_SMOOTH * (o.pinch_y - prev)
+            if self._pinch_start_y is None:
+                self._pinch_start_y = self._pinch_y
+            if self.dragging:
+                self._scroll += self._pinch_y - prev
+            elif abs(self._pinch_y - self._pinch_start_y) >= self.DRAG_START_DY:
+                self.dragging = True
+                self._pinch_since = None               # a drag is never also a pinch
+                self._scroll += self._pinch_y - self._pinch_start_y
+                events.append(DRAG_START)
+        if self.dragging or not self._pinch_armed:
+            return events
+        self._pinch_since = self._pinch_since if self._pinch_since is not None else o.t
+        if o.t - self._pinch_since >= self.PINCH_HOLD_S and o.t - self._last_pinch >= self.PINCH_COOLDOWN_S:
+            events.append(PINCH)
+            self._last_pinch = o.t
+            self._pinch_armed = False
+            self._pinch_since = None
+        return events
+
+    def _pointing(self, o: Observation) -> list[str]:
+        """Point held briefly -> one POINT_LEFT / POINT_RIGHT; relax (or switch side) to fire again."""
+        d = None if self.dragging else o.point
+        if d is None:
+            self._point, self._point_since, self._point_armed = None, None, True
+            return []
+        if d != self._point:
+            self._point, self._point_since, self._point_armed = d, o.t, True
+        if (self._point_armed and o.t - self._point_since >= self.POINT_HOLD_S
+                and o.t - self._last_point >= self.POINT_COOLDOWN_S):
+            self._point_armed = False
+            self._last_point = o.t
+            return [POINT_LEFT if d == "left" else POINT_RIGHT]
+        return []
 
 
 def pinch_ratio(landmarks) -> float | None:
@@ -113,12 +180,43 @@ def pinch_ratio(landmarks) -> float | None:
     return d(landmarks[4], landmarks[8]) / scale
 
 
+def pinch_y(landmarks) -> float | None:
+    """Vertical position of the pinch: the midpoint of the thumb and index tips (0 top .. 1 bottom)."""
+    if landmarks is None or len(landmarks) < 9:
+        return None
+    return (landmarks[4].y + landmarks[8].y) / 2
+
+
+def pointing(landmarks) -> str | None:
+    """"left" / "right" (your point of view) when only the index finger is out and it points sideways.
+
+    The camera sees you face to face, so pointing to your left moves the fingertip to the image's right
+    (+x). Other fingers must be curled (tips close to the wrist) so an open hand never counts.
+    """
+    if landmarks is None or len(landmarks) < 21:
+        return None
+    d = lambda a, b: math.hypot(a.x - b.x, a.y - b.y)
+    wrist, scale = landmarks[0], d(landmarks[0], landmarks[9])
+    if scale < 1e-3:
+        return None
+    vx, vy = landmarks[8].x - landmarks[5].x, landmarks[8].y - landmarks[5].y
+    if math.hypot(vx, vy) < 0.6 * scale or abs(vx) < 1.6 * abs(vy):
+        return None                                   # index not stretched out sideways
+    for tip, mcp in ((12, 9), (16, 13), (20, 17)):    # middle, ring, pinky curled toward the palm
+        if d(landmarks[tip], wrist) > d(landmarks[mcp], wrist) * 1.25:
+            return None
+    return "left" if vx > 0 else "right"
+
+
 def gesture_name(landmarks) -> str:
-    """Orb label: "pinch" (the one recognised gesture) or "" for anything else."""
+    """Orb label: "pinch", "point left", "point right", or "" for anything else."""
     if landmarks is None or len(landmarks) < 21:
         return ""
     r = pinch_ratio(landmarks)
-    return "pinch" if r is not None and r < VisionPolicy.PINCH_ON else ""   # pinch is the only gesture
+    if r is not None and r < VisionPolicy.PINCH_ON:
+        return "pinch"
+    p = pointing(landmarks)
+    return f"point {p}" if p else ""
 
 
 def preview(rgb, hand_landmarks, size: int = 168) -> dict:
@@ -171,6 +269,7 @@ class CameraWorker(QThread):
     status = Signal(str)     # human-readable camera status for the UI
     baseline = Signal(dict)  # {"mean", "p95", "samples"} every ~30 s, for the world model
     frame = Signal(object)   # preview() dict for the orb; display only
+    scroll = Signal(float)   # pinch-drag: image heights moved since the last frame (+ = hand down)
 
     def __init__(self, camera_index: int = CAMERA_INDEX, blink_on: float | None = None):
         super().__init__()
@@ -227,10 +326,12 @@ class CameraWorker(QThread):
                 hr = hand.detect_for_video(image, ts)
                 has_face = bool(fr.face_landmarks)
                 bl, br = blink_scores(fr.face_blendshapes[0]) if has_face and fr.face_blendshapes else (0.0, 0.0)
-                pr = pinch_ratio(hr.hand_landmarks[0]) if hr.hand_landmarks else None
-                obs = Observation(start, has_face, bl, br, pr)
+                lm = hr.hand_landmarks[0] if hr.hand_landmarks else None
+                obs = Observation(start, has_face, bl, br, pinch_ratio(lm), pinch_y(lm), pointing(lm))
                 for ev in policy.update(obs):
                     self.event.emit(ev)
+                if (dy := policy.take_scroll()) != 0.0:
+                    self.scroll.emit(dy)
                 if (summary := meter.add(obs, policy.eyes_closed)) is not None:
                     self.baseline.emit(summary)
                 self.frame.emit(preview(rgb, hr.hand_landmarks[0] if hr.hand_landmarks else None))

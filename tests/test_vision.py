@@ -107,3 +107,63 @@ def test_preview_is_small_mirrored_and_owns_its_pixels(qapp):
     assert img.pixelColor(150, 84).red() == 255 and img.pixelColor(10, 84).red() == 0   # mirrored
     assert len(out["hand"]) == 21 and all(0 <= x <= 1.2 and 0 <= y <= 1 for x, y in out["hand"])
     assert out["gesture"] == ""
+
+
+# --- new gestures: pointing left / right, pinch and drag ------------------------------------------
+
+def pointing_hand(dx: float, curled=True):
+    """Index finger stretched sideways by `dx` (image coords: + = image right = YOUR left)."""
+    pts = [LM(0.5, 0.6)] + [LM(0.42, 0.55), LM(0.40, 0.52), LM(0.42, 0.50), LM(0.45, 0.50)]  # wrist + thumb
+    pts += [LM(0.45, 0.45), LM(0.45 + dx * 0.35, 0.455), LM(0.45 + dx * 0.7, 0.458), LM(0.45 + dx, 0.46)]
+    for mcp_x in (0.5, 0.55, 0.58):                     # middle, ring, pinky
+        tip = (mcp_x, 0.52) if curled else (mcp_x, 0.2)
+        pts += [LM(mcp_x, 0.43), LM(mcp_x, 0.40), LM(*tip), LM(*tip)]
+    return pts
+
+
+def test_pointing_geometry():
+    from pet.vision import gesture_name, pointing
+    assert pointing(pointing_hand(+0.2)) == "left"       # fingertip to the image's right = your left
+    assert pointing(pointing_hand(-0.2)) == "right"
+    assert pointing(pointing_hand(+0.04)) is None        # index not stretched out
+    assert pointing(pointing_hand(+0.2, curled=False)) is None   # open hand is not pointing
+    assert pointing(hand()) is None and pointing(None) is None   # fingers up
+    assert gesture_name(pointing_hand(-0.2)) == "point right"
+
+
+def test_point_fires_once_after_hold_and_rearms_on_relax():
+    from pet.vision import POINT_LEFT, POINT_RIGHT
+    p = VisionPolicy()
+    assert run(p, ticks(0, 1.0, face=True, point="left")) == [(0.3, POINT_LEFT)]   # 0.25 s hold, once
+    run(p, [Observation(1.0, True)])                                               # relax
+    assert run(p, ticks(1.1, 1.6, face=True, point="left")) == [(1.4, POINT_LEFT)]
+    assert run(p, ticks(1.6, 2.0, face=True, point="right")) == []                 # cooldown 0.6 s
+    assert run(p, ticks(2.0, 2.4, face=True, point="right")) == [(2.0, POINT_RIGHT)]  # held since 1.6
+
+
+def test_pinch_drag_scrolls_and_never_pinches():
+    from pet.vision import DRAG_END, DRAG_START
+    p = VisionPolicy()
+    frames = [Observation(round(0.1 * i, 2), True, pinch_ratio=0.1, pinch_y=0.5 - 0.02 * i) for i in range(10)]
+    ev = run(p, frames)
+    assert [e for _, e in ev] == [DRAG_START] and PINCH not in [e for _, e in ev]
+    assert p.dragging and p.take_scroll() < -0.1 and p.take_scroll() == 0.0      # hand moved up
+    ev = run(p, [Observation(1.1, True, pinch_ratio=0.6, pinch_y=0.3)])
+    assert ev == [(1.1, DRAG_END)] and not p.dragging
+
+
+def test_still_pinch_is_a_pinch_and_small_jitter_is_not_a_drag():
+    p = VisionPolicy()
+    frames = [Observation(round(0.1 * i, 2), True, pinch_ratio=0.1, pinch_y=0.5 + (0.01 if i % 2 else 0))
+              for i in range(8)]
+    assert run(p, frames) == [(0.5, PINCH)] and not p.dragging and p.take_scroll() == 0.0
+
+
+def test_losing_the_hand_ends_a_drag_and_no_pointing_while_dragging():
+    from pet.vision import DRAG_END, DRAG_START
+    p = VisionPolicy()
+    ev = run(p, [Observation(0.0, True, pinch_ratio=0.1, pinch_y=0.5),
+                 Observation(0.1, True, pinch_ratio=0.1, pinch_y=0.6, point="left")])
+    assert ev == [(0.1, DRAG_START)] and p.dragging
+    assert run(p, ticks(0.2, 0.6, face=True, pinch_ratio=0.1, pinch_y=0.7, point="left")) == []
+    assert run(p, [Observation(0.7, True)]) == [(0.7, DRAG_END)]
