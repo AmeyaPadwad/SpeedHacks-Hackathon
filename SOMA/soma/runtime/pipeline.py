@@ -58,6 +58,7 @@ from soma.perception.preprocess import frame_to_tensor
 from soma.perception.screen_parser import parse_screen
 from soma.policy.candidate_encoder import CandidateEncoder
 from soma.policy.candidate_generator import generate_candidates
+from soma.policy.context_candidates import add_context_candidates
 from soma.policy.decision import ApprovalLedger
 from soma.policy.safety_gate import NO_SUGGESTION_LABEL, SafetyGate
 from soma.runtime.history import ScreenHistory
@@ -437,6 +438,8 @@ class SomaRuntime:
         t = time.perf_counter()
         A = mc.max_candidates
         candidates = generate_candidates(obs, retrieved, A, self.authorized_file)
+        if self.cfg.policy.context_templates:
+            candidates = add_context_candidates(obs, candidates, A)
         mem_by_id = {r.item.id: r for r in retrieved}
         blocked = SafetyGate.blocked_mask(candidates, self.authorized_file,
                                           memories_by_id=mem_by_id)
