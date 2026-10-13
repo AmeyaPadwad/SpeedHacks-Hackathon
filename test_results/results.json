@@ -2,17 +2,17 @@
   {
     "check": "Environment",
     "status": "INFO",
-    "detail": "Windows 11 (10.0.26200), Python 3.12.12, PySide6 6.8.3, OpenCV 5.0.0, MediaPipe 1.1.0, openai 3.29.0"
+    "detail": "Windows 11 (10.0.26200), Python 3.12.12, PySide6 6.8.3, OpenCV 5.0.0, MediaPipe 1.1.0"
   },
   {
     "check": "Unit + integration tests",
     "status": "PASS",
-    "detail": "122/122 passed, 0 failed, 0 errors, 0 skipped in 29.7s"
+    "detail": "54/54 passed, 0 failed, 0 errors, 0 skipped in 21.2s"
   },
   {
     "check": "MediaPipe models",
-    "status": "FAIL",
-    "detail": "missing: run py tools/get_models.py"
+    "status": "PASS",
+    "detail": "face + hand landmarker present"
   },
   {
     "check": "Webcam: face / eyes / hands (live)",
@@ -22,12 +22,7 @@
   {
     "check": "Foreground app detection",
     "status": "PASS",
-    "detail": "foreground = Code.exe -> show Pette"
-  },
-  {
-    "check": "VS Code bridge snapshot",
-    "status": "PASS",
-    "detail": "memory_fusion.py (python), 0 diagnostic(s), updated 29s ago"
+    "detail": "foreground = comet.exe -> hide Pette"
   },
   {
     "check": "db cache + world model",
@@ -35,24 +30,14 @@
     "detail": "write -> learn -> read round trip in a temp db"
   },
   {
-    "check": "Groq (qwen/qwen3.8-27b / whisper-large-v3-turbo)",
-    "status": "SKIP",
-    "detail": "GROQ_API_KEY not set"
+    "check": "SOMA service (synthetic screen)",
+    "status": "PASS",
+    "detail": "4.1s, decision: SPEAK Write a test for the code in \"handlers.py\"  (SUGGEST_NEXT_STEP#2 p=0.33 >= threshold 0.10 and beats NO_S"
   },
   {
-    "check": "ElevenLabs transcription",
+    "check": "SOMA tests",
     "status": "SKIP",
-    "detail": "ELEVENLABS_AGENT_ID / ELEVENLABS_API_KEY not set (or FLOWSTATE_VOICE=whisper)"
-  },
-  {
-    "check": "Slack webhook",
-    "status": "SKIP",
-    "detail": "not configured"
-  },
-  {
-    "check": "Discord webhook",
-    "status": "SKIP",
-    "detail": "not configured"
+    "detail": "--no-soma-tests"
   },
   {
     "check": "UI states (screenshots)",
