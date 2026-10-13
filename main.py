@@ -1,7 +1,8 @@
-"""Pette entry point: Pette overlay (bubble + camera orb + sprite), world-model window, tray, hotkey.
+"""Pette entry point: the UI for SOMA. Pette (sprite + glass bubble + camera orb), world-model panel, tray.
 
-One workflow: click Pette (or press the hotkey) -> speak -> your words in the bubble -> Groq drafts ->
-a short countdown with Cancel -> the message (with code + a summary of the changes) is dispatched.
+SOMA (SOMA/, started by run_pette_soma.sh) looks at the screen and the folders you index and suggests what
+to do next. Pette shows each suggestion as a card; "Open" / "Copy" (or a pinch) does it, "Not now" puts it off.
+Click Pette (or Ctrl+Shift+Space) to have SOMA look at the screen right now.
 """
 import argparse
 import os
@@ -14,47 +15,25 @@ from dotenv import load_dotenv
 # Load before importing pet modules: they read settings at import time. Real env vars win over .env.
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFileDialog  # noqa: E402
 
 from db import Store, WorldModel  # noqa: E402
-from pet import eleven, llm, soma, voice  # noqa: E402
-from pet.brain import OfflineBrain  # noqa: E402
+from pet import hotkeys, soma  # noqa: E402
 from pet.focus import FocusGate  # noqa: E402
-from pet.pipeline import Pipeline  # noqa: E402
 from pet.ui import Overlay  # noqa: E402
 from pet.watcher import Watcher  # noqa: E402
 from pet.worldview import WorldWindow  # noqa: E402
 
 
 def parse_args(argv=None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Pette voice agent")
-    ap.add_argument("--no-voice", action="store_true", help="type commands instead of speaking them")
-    ap.add_argument("--demo", action="store_true",
-                    help="offline demo: typed commands and a keyword drafter (labeled DEMO); dispatch still runs")
+    ap = argparse.ArgumentParser(description="Pette: the on-screen face of SOMA")
+    ap.add_argument("--soma", default=None, metavar="ENDPOINT_FILE",
+                    help=f"SOMA endpoint file written by SOMA/scripts/serve.py (default ${soma.ENDPOINT_VAR})")
     ap.add_argument("--no-camera", action="store_true", help="don't start the webcam (the orb shows 'camera off')")
-    ap.add_argument("--camera", action="store_true", help=argparse.SUPPRESS)   # old flag; the camera is on by default
     ap.add_argument("--no-world", action="store_true", help="don't open the world-model window at launch")
-    ap.add_argument("--always-show", action="store_true",
-                    help="show Pette over every app, not only VS Code and terminals")
-    ap.add_argument("--soma", nargs="?", const="", default=None, metavar="ENDPOINT_FILE",
-                    help=f"show SOMA's on-screen action suggestions (endpoint file, default ${soma.ENDPOINT_VAR})")
+    ap.add_argument("--focus-only", action="store_true", help="show Pette only over VS Code and terminals")
+    ap.add_argument("--always-show", action="store_true", help=argparse.SUPPRESS)   # old flag; now the default
     return ap.parse_args(argv)
-
-
-def make_listen(settings: "eleven.Settings | None"):
-    """The listener for the one workflow: ElevenLabs (Scribe or live) when configured, else Groq Whisper."""
-    if settings is None:
-        return lambda on_level=None, register_cancel=None: voice.transcribe(voice.record_until_silence())
-    if settings.mode == "scribe":
-        return lambda on_level=None, register_cancel=None: eleven.scribe(voice.record_until_silence(),
-                                                                         settings.api_key)
-
-    def live(on_level=None, register_cancel=None):
-        t = eleven.LiveTranscriber(settings, on_level=on_level)
-        if register_cancel:
-            register_cancel(t.cancel)
-        return t.run()
-    return live
 
 
 def build(args: argparse.Namespace) -> SimpleNamespace:
@@ -64,27 +43,58 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     overlay = Overlay()
     memory = Store()                    # db/pette_cache.sqlite3: facts only, local, 30-day retention
     world = WorldModel(memory)
-    settings = None if (args.demo or args.no_voice) else eleven.Settings.from_env()
-    pipeline = Pipeline(overlay, OfflineBrain() if args.demo else None, listen=make_listen(settings),
-                        use_voice=not (args.no_voice or args.demo), memory=memory, world=world)
+    suggester = soma.Suggester(overlay, connect=lambda: soma.SomaClient.from_endpoint(args.soma),
+                               memory=memory, world=world)
     watcher = Watcher(overlay, memory=memory, world=world)
     app.aboutToQuit.connect(memory.close)
-    worldwin = WorldWindow(overlay, world, pipeline, watcher)
+    worldwin = WorldWindow(overlay, world, suggester, watcher)
     overlay.world_requested.connect(worldwin.toggle)
+    for window in (overlay, worldwin):   # SOMA must never OCR Pette's own bubble or panel
+        soma.exclude_from_capture(window)
+
+    # --- tray: SOMA ---
+    soma_action = overlay.add_menu_action(f"SOMA suggestions ({hotkeys.SOMA_HOTKEY.title()})",
+                                          suggester.set_enabled, checkable=True, checked=True)
+    if soma_action:
+        suggester.enabled_changed.connect(soma_action.setChecked)
+
+    def pick_folder():
+        path = QFileDialog.getExistingDirectory(None, "Choose a folder for SOMA to learn from")
+        suggester.add_folder(path)
+
+    overlay.add_menu_action("Add a folder for SOMA…", pick_folder)
+    folders_menu = overlay.add_menu("Indexed folders")
+
+    def show_folders(folders: list):
+        if folders_menu is None:
+            return
+        folders_menu.clear()
+        if not folders:
+            folders_menu.addAction("(none yet: add a folder)").setEnabled(False)
+        for f in folders:
+            name = Path(f["path"]).name or f["path"]
+            folders_menu.addAction(f"Remove {name} ({f.get('memories', 0)} files)",
+                                   lambda p=f["path"]: suggester.remove_folder(p))
+
+    suggester.folders_changed.connect(show_folders)
+    show_folders([])
+
+    # --- tray: where Pette shows, camera, memory ---
     gate = FocusGate(overlay)
     overlay.add_menu_action("Show only in VS Code / Terminal", gate.set_enabled, checkable=True,
-                            checked=not args.always_show)
-    gate.enabled = gate.enabled and not args.always_show
-
-    # --- tray: camera + memory ---
+                            checked=args.focus_only)
+    gate.enabled = args.focus_only
     camera_action = overlay.add_menu_action("Camera: you, hands, presence (local)", watcher.set_camera,
                                             checkable=True)
+    overlay.add_menu_action(f"Hide / show camera view ({hotkeys.CAMERA_HOTKEY.title()})",
+                            overlay.toggle_camera_view)
     overlay.add_menu_action("Remember my patterns", lambda on: setattr(memory, "enabled", on),
                             checkable=True, checked=True)
 
     def clear_memory():
         memory.clear()
-        overlay.say("Memory cleared. Back to defaults.", title="Pette's memory", seconds=5)
+        overlay.say("Pette's memory cleared (SOMA's indexed folders stay; remove them from the tray).",
+                    title="Pette's memory", seconds=6)
         worldwin.refresh()
 
     overlay.add_menu_action("Clear Pette memory", clear_memory)
@@ -107,34 +117,21 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
 
     overlay.pause_toggled.connect(on_pause)
 
-    overlay.add_menu_action(f"Hide / show camera view ({voice.CAMERA_HOTKEY.title()})",
-                            overlay.toggle_camera_view)
-
     # Global hotkeys fire on the keyboard library's thread: they only emit signals (queued to the main thread).
-    hotkey_ok = voice.register_hotkey(pipeline.hotkey_pressed.emit)
-    hotkeys = {voice.CAMERA_HOTKEY: overlay.camera_view_requested.emit,
-               voice.WORLD_HOTKEY: overlay.world_requested.emit}
-    suggester = None
-    if args.soma is not None or os.environ.get(soma.ENDPOINT_VAR):
-        suggester = soma.Suggester(overlay, pipeline, connect=lambda: soma.SomaClient.from_endpoint(args.soma or None),
-                                   memory=memory)
-        for window in (overlay, worldwin):   # SOMA must never OCR Pette's own bubble or panel
-            soma.exclude_from_capture(window)
-        soma_action = overlay.add_menu_action(f"SOMA suggestions ({voice.SOMA_HOTKEY.title()})",
-                                              suggester.set_enabled, checkable=True, checked=True)
-        if soma_action:
-            suggester.enabled_changed.connect(soma_action.setChecked)
-        hotkeys[voice.SOMA_HOTKEY] = suggester.toggle_requested.emit
-        suggester.start()
-        app.aboutToQuit.connect(suggester.stop)
-    for combo, emit in hotkeys.items():
-        voice.register_hotkey(emit, combo)
-    app.aboutToQuit.connect(voice.unregister_hotkeys)
+    combos = {hotkeys.LOOK_HOTKEY: suggester.look_requested.emit,
+              hotkeys.CAMERA_HOTKEY: overlay.camera_view_requested.emit,
+              hotkeys.WORLD_HOTKEY: overlay.world_requested.emit,
+              hotkeys.SOMA_HOTKEY: suggester.toggle_requested.emit}
+    registered = [hotkeys.register(emit, combo) for combo, emit in combos.items()]   # register all, no short-circuit
+    hotkey_ok = all(registered)
+    app.aboutToQuit.connect(hotkeys.unregister_all)
     app.aboutToQuit.connect(watcher.stop)
+    app.aboutToQuit.connect(suggester.stop)
 
     overlay.place_default()
     overlay.show()
-    gate.start()   # hides Pette right away if VS Code / a terminal isn't in front
+    gate.start()
+    suggester.start()
     if not (args.no_camera or os.environ.get("QT_QPA_PLATFORM") == "offscreen"):
         if camera_action:
             camera_action.setChecked(True)
@@ -142,19 +139,11 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
             watcher.set_camera(True)
     if not args.no_world:
         worldwin.show_near()
-    how = (f"Click me (or {voice.HOTKEY.title()}) and tell me what to send. "
-           f"{voice.CAMERA_HOTKEY.title()} hides the camera, {voice.WORLD_HOTKEY.title()} the world panel.")
-    if args.demo:
-        overlay.say(f"Demo mode: type commands, keyword drafter. {how}", title=OfflineBrain.label, seconds=8)
-    elif not llm.configured():
-        overlay.say(f"{llm.KEY_VAR} isn't set, so I can't draft messages yet.", title="Setup needed", seconds=10)
-    else:
-        voice_name = "ElevenLabs" if settings else "Whisper"
-        overlay.say(how if hotkey_ok else "Click me and tell me what to send.", title=f"Ready · {voice_name}",
-                    seconds=7)
-    return SimpleNamespace(app=app, overlay=overlay, memory=memory, world=world, pipeline=pipeline,
-                           watcher=watcher, gate=gate, camera_action=camera_action, worldwin=worldwin,
-                           settings=settings, suggester=suggester)
+    look = f"Click me{f' (or {hotkeys.LOOK_HOTKEY.title()})' if hotkey_ok else ''} and SOMA looks at your screen now."
+    overlay.say(f"I'll suggest next steps as you work. {look} Add folders from the tray so SOMA knows your files.",
+                title="Ready · SOMA", seconds=8)
+    return SimpleNamespace(app=app, overlay=overlay, memory=memory, world=world, suggester=suggester,
+                           watcher=watcher, gate=gate, camera_action=camera_action, worldwin=worldwin)
 
 
 def main(argv=None) -> int:

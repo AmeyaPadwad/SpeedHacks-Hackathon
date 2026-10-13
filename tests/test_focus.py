@@ -52,17 +52,15 @@ def test_gate_hides_and_shows_overlay_and_blocks_hotkeys(qapp):
     assert o.isVisible()                                          # gate off: always shown
 
 
-def test_pipeline_ignores_triggers_outside_allowed_apps(qapp):
-    from pet.context import Context
-    from pet.pipeline import Pipeline
+def test_look_now_is_ignored_outside_allowed_apps(qapp):
+    from pet import soma
+    from tests.test_soma import FakeClient
     o = Overlay(tray=False)
-    calls = []
-    p = Pipeline(o, listen=lambda *a: calls.append(1) or "hi", capture=lambda: Context(None),
-                 spawn=lambda f: f())
+    client = FakeClient()
+    s = soma.Suggester(o, client, spawn=lambda f: f())   # keep a reference: Qt drops a collected QObject
     o.set_context_allowed(False)
-    p.trigger()
-    assert calls == [] and not p.busy and o.bubble.proposal is None
+    o.look_requested.emit()
+    assert client.calls == [] and o.bubble.proposal is None
     o.set_context_allowed(True)
-    p.brain = type("B", (), {"draft": lambda self, c, ctx: __import__("pet.brain").brain.Draft("none", "", "", "ok")})()
-    p.trigger()
-    assert calls == [1]
+    o.look_requested.emit()
+    assert client.calls == [("trigger",)] and s.state == "looking"

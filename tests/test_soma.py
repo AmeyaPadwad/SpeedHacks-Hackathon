@@ -1,41 +1,35 @@
-"""SOMA suggestions in Pette: shown only when Pette is free, nothing runs without "Do it", feedback goes back."""
+"""Pette as SOMA's UI: cards only when free, nothing happens without "Do it", feedback and facts flow back."""
 import json
 
 import pytest
 
-from db import Store
-from pet import soma
-from pet.brain import Draft
-from pet.context import ActiveFile, Context
-from pet.pipeline import Pipeline
+from db import Store, WorldModel
+from pet import actions, soma
 from pet.ui import Overlay
 
-CTX = Context(ActiveFile("C:/repo/app.py", "python", "x = 1\n"), "--- a/app.py\n+++ b/app.py\n+x = 1")
-DRAFT = Draft("slack", "team", "", "Summary: set x.", code=CTX.changes, code_label="app.py", code_lang="diff")
 
-
-def sug(sid="s1", template="share_changes", action="SUGGEST_NEXT_STEP", **kw):
+def sug(sid="s1", template="review_changes", action="SUGGEST_NEXT_STEP", **kw):
     base = {"available": True, "silent": False, "valid": True, "id": sid, "action": action,
-            "text": 'Send the team a summary of your changes to "app.py"', "evidence": ['editing "app.py"'],
-            "template": template}
+            "text": 'Review your changes to "app.py" before you commit', "evidence": ['editing "app.py"'],
+            "template": template, "file": None, "line": None, "memory_source": None}
     return {**base, **kw}
 
 
 class FakeClient:
-    def __init__(self, *suggestions):
-        self.queue = list(suggestions)
-        self.calls = []
+    def __init__(self):
+        self.queue, self.calls = [], []
+        self.triggered = True
+        self.folder_data = {"folders": [], "indexing": None, "last_report": {}}
 
     def suggestion(self):
-        if not self.queue:
-            return {"available": True, "silent": True}
-        s = self.queue.pop(0)
-        if isinstance(s, Exception):
-            raise s
-        return s
+        return self.queue.pop(0) if self.queue else {"available": True, "silent": True}
 
     def feedback(self, sid, outcome):
         self.calls.append(("feedback", sid, outcome))
+
+    def trigger(self):
+        self.calls.append(("trigger",))
+        return {"triggered": self.triggered}
 
     def pause(self):
         self.calls.append(("pause",))
@@ -43,26 +37,36 @@ class FakeClient:
     def resume(self):
         self.calls.append(("resume",))
 
+    def folders(self):
+        return self.folder_data
 
-class FakeBrain:
-    def __init__(self):
-        self.commands = []
+    def add_folder(self, path):
+        self.calls.append(("add_folder", path))
+        if path == "bad":
+            raise soma.SomaError("Refusing to index an entire home directory or drive root.")
+        self.folder_data = {"folders": [{"path": path, "memories": 0}], "indexing": path, "last_report": {}}
+        return {"path": path, "indexing": True}
 
-    def draft(self, command, ctx):
-        self.commands.append(command)
-        return DRAFT
+    def remove_folder(self, path):
+        self.calls.append(("remove_folder", path))
+        self.folder_data = {"folders": [], "indexing": None, "last_report": {}}
+        return {"path": path, "forgotten": 3}
 
 
 @pytest.fixture
-def rig(qapp, monkeypatch, tmp_path):
-    monkeypatch.setattr("pet.pipeline.MIN_INTERVAL_S", 0)
+def rig(qapp, tmp_path):
     o = Overlay(tray=False)
-    brain, sent, copied = FakeBrain(), [], []
-    p = Pipeline(o, brain, capture=lambda: CTX, send=lambda d: sent.append(d) or "Sent.",
-                 configured=lambda _: True, use_voice=False, spawn=lambda f: f(), send_delay_s=2)
     store = Store(tmp_path / "m.sqlite3")
-    client = FakeClient()
-    s = soma.Suggester(o, p, client, memory=store, spawn=lambda f: f(), clipboard=copied.append)
+    world = WorldModel(store)
+    client, opened, copied, states = FakeClient(), [], [], []
+
+    def open_file(path, line=None):
+        opened.append((path, line))
+        return f"Opened {path}"
+
+    s = soma.Suggester(o, client, memory=store, world=world, spawn=lambda f: f(), clipboard=copied.append,
+                       open_file=open_file, show_s=2)
+    s.status.connect(lambda st, d: states.append(st))
 
     def deliver(*suggestions):
         client.queue.extend(suggestions)
@@ -70,133 +74,177 @@ def rig(qapp, monkeypatch, tmp_path):
             s.poll_once()
         qapp.processEvents()
 
-    yield o, p, s, client, brain, sent, copied, store, deliver
+    r = type("Rig", (), {})()
+    r.o, r.s, r.client, r.store, r.world, r.opened, r.copied, r.states, r.deliver = \
+        o, s, client, store, world, opened, copied, states, deliver
+    yield r
     store.close()
 
 
-def finish(p):
-    while p._countdown.isActive():
-        p._tick()
+def test_card_then_copy(rig):
+    rig.deliver(sug())
+    b = rig.o.bubble
+    assert b.proposal.title == "SOMA suggests · Next step"
+    assert b.primary.text() == "Copy" and b.cancel.text() == "Not now" and b.progress == 1.0
+    assert rig.copied == [] and rig.opened == [] and rig.o.orb.label() == "Suggestion"
+    b.primary.click()
+    assert rig.copied == ['Review your changes to "app.py" before you commit']
+    assert ("feedback", "s1", "accepted") in rig.client.calls and rig.o.orb.label() == "Done ✓"
+    assert rig.store.query("SELECT kind, outcome FROM offers ORDER BY rowid") == [
+        ("soma:review_changes", "shown"), ("soma:review_changes", "accepted")]
 
 
-def test_suggestion_card_then_do_it_runs_the_pette_workflow(rig):
-    o, p, s, client, brain, sent, _, store, deliver = rig
-    deliver(sug())
-    assert o.bubble.proposal.title == "SOMA suggests · Next step"
-    assert o.bubble.primary.text() == "Do it" and o.bubble.cancel.text() == "Not now"
-    assert o.orb.label() == ""                                     # ring reset: no stale status pill
-    assert sent == [] and brain.commands == []                     # nothing runs on its own
-    o.bubble.primary.click()
-    assert brain.commands == [soma.COMMANDS["share_changes"]]      # fixed text, no screen content
-    assert p.state == "pending"                                    # normal countdown: Cancel still works
-    finish(p)
-    assert sent == [DRAFT]
-    assert ("feedback", "s1", "accepted") in client.calls
-    assert store.query("SELECT kind, outcome FROM offers ORDER BY ts") == [("soma:share_changes", "shown"),
-                                                                          ("soma:share_changes", "accepted")]
+def test_open_file_at_line_and_memory_source(rig):
+    rig.deliver(sug("s1", template="", action="OPEN_RELEVANT_FILE", text="Open calc.py at line 40",
+                    file="C:/proj/calc.py", line=40))
+    assert rig.o.bubble.primary.text() == "Open" and rig.o.bubble.proposal.title.endswith("Open file")
+    rig.o.bubble.primary.click()
+    assert rig.opened == [("C:/proj/calc.py", 40)]
+    rig.deliver(sug("s2", template="", action="COMPARE_WITH_PRIOR_WORK", text='Compare with "retries.md"',
+                    memory_source="C:/notes/retries.md"))
+    rig.o.pinch()                                                   # pinch = Do it
+    assert rig.opened[-1] == ("C:/notes/retries.md", None) and rig.copied == []
+    assert rig.store.query("SELECT kind FROM offers WHERE outcome='accepted' ORDER BY rowid") == [
+        ("soma:open_relevant_file",), ("soma:compare_with_prior_work",)]
 
 
-def test_not_now_dismisses_and_reports_rejected(rig):
-    o, p, s, client, brain, sent, *_ = rig
-    deliver = rig[-1]
-    deliver(sug())
-    o.bubble.cancel.click()
-    assert o.bubble.proposal is None and brain.commands == [] and sent == []
-    assert client.calls[-1] == ("feedback", "s1", "rejected")
+def test_missing_file_is_reported_not_raised(rig):
+    def gone(path, line=None):
+        raise actions.ActionError("calc.py isn't there any more.")
+    rig.s._open_file = gone
+    rig.deliver(sug(file="C:/proj/calc.py"))
+    rig.o.bubble.primary.click()
+    assert "isn't there" in rig.o.bubble.body.text() and rig.states[-1] == "failed"
 
 
-def test_unanswered_card_expires_as_ignored(rig):
-    o, p, s, client, *_ = rig
-    rig[-1](sug())
-    s._expired()
-    assert o.bubble.proposal is None and client.calls[-1] == ("feedback", "s1", "ignored")
+def test_not_now_and_expiry(rig, qapp):
+    rig.deliver(sug("s1"))
+    rig.o.bubble.cancel.click()
+    assert rig.o.bubble.proposal is None and rig.client.calls[-1] == ("feedback", "s1", "rejected")
+    assert rig.states[-1] == "dismissed"
+    rig.deliver(sug("s2"))
+    for _ in range(8):                                              # 2 s at 250 ms ticks
+        rig.s._count_down()
+    assert rig.o.bubble.proposal is None and rig.client.calls[-1] == ("feedback", "s2", "ignored")
+    assert rig.store.query("SELECT outcome FROM offers ORDER BY rowid") == [
+        ("shown",), ("dismissed",), ("shown",), ("ignored",)]
 
 
-def test_same_suggestion_is_shown_once(rig):
-    o, p, s, client, *_ = rig
-    deliver = rig[-1]
-    deliver(sug())
-    o.bubble.cancel.click()
-    deliver(sug())
-    assert o.bubble.proposal is None
+def test_same_suggestion_once_and_not_while_busy_hidden_or_paused(rig):
+    rig.deliver(sug("s1"))
+    rig.o.bubble.cancel.click()
+    rig.deliver(sug("s1"))
+    assert rig.o.bubble.proposal is None                            # already handled
+    rig.deliver(sug("s2", silent=True), sug("s3", valid=False), sug("s4", text=""))
+    assert rig.o.bubble.proposal is None
+    rig.o.context_allowed = False                                   # focus gate hid Pette
+    rig.deliver(sug("s5"))
+    assert rig.o.bubble.proposal is None
+    rig.o.context_allowed = True
+    rig.o.set_paused(True)
+    rig.deliver(sug("s6"))
+    assert rig.o.bubble.proposal is None and ("pause",) in rig.client.calls
+    rig.o.set_paused(False)
+    rig.deliver(sug("s7"))
+    assert rig.o.bubble.proposal is not None and ("resume",) in rig.client.calls
 
 
-def test_not_shown_while_busy_hidden_paused_or_silent(rig):
-    o, p, s, client, brain, sent, copied, store, deliver = rig
-    deliver(sug(silent=True), sug("s2", valid=False), sug("s3", text=""))
-    assert o.bubble.proposal is None
-    o.context_allowed = False                                      # focus gate hid Pette
-    deliver(sug("s4"))
-    assert o.bubble.proposal is None
-    o.context_allowed = True
-    p.trigger()                                                    # typing a command: Pette is busy
-    deliver(sug("s5"))
-    assert o.bubble.asking and o.bubble.proposal is None
-    o.bubble.cancel.click()
-    o.set_paused(True)
-    deliver(sug("s6"))
-    assert o.bubble.proposal is None and ("pause",) in client.calls
-    o.set_paused(False)
-    deliver(sug("s7"))
-    assert o.bubble.proposal is not None and ("resume",) in client.calls
+def test_muted_kind_is_skipped_unless_you_asked(rig):
+    for _ in range(4):
+        rig.store.log_offer("soma:write_tests", "dismissed")
+    rig.deliver(sug("s1", template="write_tests", text="Write a test for app.py"))
+    assert rig.o.bubble.proposal is None and rig.client.calls[-1] == ("feedback", "s1", "ignored")
+    rig.o.pet.clicked.emit()                                        # you asked: show it anyway
+    rig.deliver(sug("s2", template="write_tests", text="Write a test for app.py"))
+    assert rig.o.bubble.proposal is not None
 
 
-def test_non_actionable_suggestion_is_copied(rig):
-    o, p, s, client, brain, sent, copied, store, deliver = rig
-    deliver(sug(template="", action="EXPLAIN_ERROR", text='Explain the error "TypeError: x"'))
-    assert o.bubble.primary.text() == "Copy"
-    o.bubble.primary.click()
-    assert copied == ['Explain the error "TypeError: x"'] and brain.commands == []
-    assert "Copied" in o.bubble.body.text()
-
-
-def test_search_tools_goes_to_darwin_with_a_clean_topic():
-    s = sug(template="search_tools", evidence=["Vector DBs <script>`rm`</script>"])
-    assert soma.command_for(s) == "search Darwin for Vector DBs script rm script"
-    assert soma.command_for(sug(template="search_tools", evidence=["<>"])) is None
-    assert soma.command_for(sug(template="unknown")) is None
+def test_click_looks_now_then_card_or_nothing(rig):
+    rig.o.pet.clicked.emit()
+    assert ("trigger",) in rig.client.calls and rig.states[-1] == "looking"
+    assert "Looking at your screen" in rig.o.bubble.body.text()
+    rig.deliver(sug("s1"))
+    assert rig.o.bubble.proposal is not None and rig.states[-1] == "suggesting"
+    rig.o.bubble.cancel.click()
+    rig.o.pet.clicked.emit()
+    rig.s._nothing_found()                                          # the look timed out
+    assert "Nothing worth suggesting" in rig.o.bubble.body.text() and rig.states[-1] == "idle"
+    rig.client.triggered = False                                    # SOMA paused on its side
+    rig.o.pet.clicked.emit()
+    assert "paused" in rig.o.bubble.body.text() and rig.states[-1] == "failed"
 
 
 def test_toggle_off_pauses_soma_and_clears_the_card(rig):
-    o, p, s, client, *_ = rig
-    rig[-1](sug())
-    s.toggle()
-    assert not s.enabled and ("pause",) in client.calls and client.calls[0] == ("feedback", "s1", "ignored")
-    rig[-1](sug("s2"))
-    assert "Suggestions off" in o.bubble.body.text()
-    s.toggle()
-    assert s.enabled and client.calls[-1] == ("resume",)
+    rig.deliver(sug())
+    rig.s.toggle()
+    assert not rig.s.enabled and ("pause",) in rig.client.calls
+    assert ("feedback", "s1", "ignored") in rig.client.calls
+    rig.deliver(sug("s2"))
+    assert "Suggestions off" in rig.o.bubble.body.text()
+    rig.o.pet.clicked.emit()
+    assert ("trigger",) not in rig.client.calls                     # off means off
+    rig.s.toggle()
+    assert rig.s.enabled and rig.client.calls[-1] == ("resume",)
 
 
-def test_lazy_connect_and_late_error_report(rig, monkeypatch):
-    o, p, *_ = rig
+def test_folders_add_index_done_and_remove(rig):
+    seen = []
+    rig.s.folders_changed.connect(seen.append)
+    rig.s.add_folder("C:/notes")
+    assert ("add_folder", "C:/notes") in rig.client.calls and rig.states[-1] == "indexing"
+    assert rig.s._indexing.isActive()
+    rig.client.folder_data = {"folders": [{"path": "C:/notes", "memories": 12}], "indexing": None,
+                              "last_report": {"path": "C:/notes", "added": 12, "updated": 0}}
+    rig.s.refresh_folders()
+    assert not rig.s._indexing.isActive() and "Indexed 12 file(s) from notes" in rig.o.bubble.body.text()
+    assert seen[-1] == [{"path": "C:/notes", "memories": 12}] and rig.states[-1] == "idle"
+    rig.s.remove_folder("C:/notes")
+    assert "forgot 3 file(s)" in rig.o.bubble.body.text() and seen[-1] == []
+    rig.s.add_folder("bad")
+    assert "home directory" in rig.o.bubble.body.text() and rig.states[-1] == "failed"
+
+
+def test_lazy_connect_and_late_offline_report(qapp, monkeypatch):
+    o = Overlay(tray=False)
     notes, attempts = [], []
     monkeypatch.setattr(o, "notify", lambda title, text: notes.append(text))
 
     def connect():
         attempts.append(1)
-        raise soma.SomaError("SOMA isn't running (no endpoint file).")
+        raise soma.SomaError("SOMA isn't running.")
 
-    s = soma.Suggester(o, p, connect=connect, spawn=lambda f: f())
+    s = soma.Suggester(o, connect=connect, spawn=lambda f: f())
     for _ in range(soma.REPORT_AFTER - 1):
         s.poll_once()
     assert notes == [] and len(attempts) == soma.REPORT_AFTER - 1   # still starting up: stay quiet
     s.poll_once()
+    qapp.processEvents()
     s.poll_once()
-    assert len(notes) == 1 and "isn't running" in notes[0]
+    qapp.processEvents()
+    assert len(notes) == 1 and o.orb.label() == "SOMA offline"
 
 
-def test_client_reads_endpoint_and_refuses_remote(tmp_path):
+def test_client_endpoint_errors_and_localhost_only(tmp_path):
     ep = tmp_path / "ep.json"
     ep.write_text(json.dumps({"url": "http://127.0.0.1:5123", "token": "t0k"}))
     seen = []
     c = soma.SomaClient.from_endpoint(ep, request=lambda m, path, body: seen.append((m, path, body)) or (200, {}))
-    c.feedback("s1", "accepted")
-    assert seen == [("POST", "/feedback", {"suggestion_id": "s1", "outcome": "accepted"})]
+    c.add_folder("C:/notes")
+    c.trigger()
+    assert seen == [("POST", "/folders", {"path": "C:/notes"}), ("POST", "/trigger", {})]
     with pytest.raises(soma.SomaError):
         soma.SomaClient("http://evil.example:80", "t")
     with pytest.raises(soma.SomaError):
         soma.SomaClient.from_endpoint(tmp_path / "missing.json")
-    bad = soma.SomaClient("http://127.0.0.1:1", "t", request=lambda *a: (401, {}))
-    with pytest.raises(soma.SomaError, match="401"):
-        bad.suggestion()
+    bad = soma.SomaClient("http://127.0.0.1:1", "t", request=lambda *a: (400, {"error": "not a folder: X"}))
+    with pytest.raises(soma.SomaError, match="not a folder"):
+        bad.add_folder("X")
+
+
+def test_kind_and_opener():
+    assert soma.kind_of(sug()) == "soma:review_changes"
+    assert soma.kind_of(sug(template="", action="EXPLAIN_ERROR")) == "soma:explain_error"
+    assert soma.opener(sug()) is None
+    assert soma.opener(sug(file="a.py", line=3)) == ("a.py", 3)
+    assert soma.opener(sug(file="a.py", line="3")) == ("a.py", None)  # only real ints become a line
+    assert soma.opener(sug(memory_source="n.md")) == ("n.md", None)

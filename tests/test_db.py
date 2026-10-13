@@ -1,7 +1,7 @@
 import pytest
 
 from db import Store, WorldModel
-from db.world_model import DEFAULT_BLINK_ON, DEFAULT_COOLDOWN_S
+from db.world_model import DEFAULT_BLINK_ON
 
 
 class Clock:
@@ -22,21 +22,10 @@ def mem(tmp_path):
 
 def test_schema_has_no_content_columns(mem):
     store, _, _ = mem
-    cols = {r[1] for t in ("events", "messages", "offers", "blink_baseline")
+    cols = {r[1] for t in ("events", "offers", "blink_baseline")
             for r in store.query(f"PRAGMA table_info({t})")}
-    assert not cols & {"message", "text", "body", "subject", "image", "frame", "screenshot", "code"}
-
-
-def test_preferred_platform_weights_sends(mem):
-    store, world, _ = mem
-    assert world.preferred_platform("Sarah") is None
-    store.log_message("Sarah", "discord", "drafted")
-    store.log_message("Sarah", "slack", "drafted")
-    store.log_message("Sarah", "slack", "sent")
-    store.log_message("Sarah", "discord", "cancelled")
-    assert world.preferred_platform("sarah ") == "slack"          # case/space-insensitive
-    assert world.known_contacts() == [("sarah", "slack")]
-    assert world.send_rate() == 0.5
+    assert not cols & {"message", "text", "body", "subject", "image", "frame", "screenshot", "code",
+                       "path", "file", "summary"}
 
 
 def test_blink_threshold_calibrates_after_enough_samples(mem):
@@ -53,23 +42,6 @@ def test_blink_threshold_calibrates_after_enough_samples(mem):
     assert world.blink_threshold() == 0.85                         # ceiling
 
 
-@pytest.mark.parametrize("accepted,declined,factor", [(0, 6, 3), (2, 4, 1.5), (3, 3, 1), (5, 1, 0.5)])
-def test_offer_cooldown_adapts(mem, accepted, declined, factor):
-    store, world, _ = mem
-    for _ in range(accepted):
-        store.log_offer("proactive", "accepted")
-    for _ in range(declined):
-        store.log_offer("proactive", "declined")
-    store.log_offer("proactive", "shown")                          # 'shown' never counts
-    assert world.offer_cooldown_s() == max(300, DEFAULT_COOLDOWN_S * factor)
-
-
-def test_cooldown_default_with_little_data(mem):
-    store, world, _ = mem
-    store.log_offer("proactive", "declined")
-    assert world.offer_cooldown_s() == DEFAULT_COOLDOWN_S
-
-
 def test_presence_and_summary(mem):
     store, world, _ = mem
     store.log_event("face_away")
@@ -79,9 +51,9 @@ def test_presence_and_summary(mem):
     store.log_event("pinch")
     p = world.presence_today()
     assert p == {"away_episodes": 2, "median_away_s": 21.0, "eyes_closed": 1, "pinches": 1}
-    store.log_message("Ameya", "discord", "sent")
+    store.log_offer("soma:review_changes", "accepted")
     s = world.summary()
-    assert "Ameya (discord)" in s and "away 2x" in s and "(default)" in s
+    assert "1 done" in s and "away 2x" in s and "(default)" in s
 
 
 def test_disable_prune_and_clear(mem):
@@ -113,11 +85,48 @@ def test_thread_safety(mem):
 def test_soma_suggestion_outcomes_show_as_a_rule(mem):
     store, world, _ = mem
     assert world.soma_counts() == {"shown": 0, "accepted": 0, "dismissed": 0, "ignored": 0}
-    assert not any("SOMA" in r["when"] for r in world.snapshot()["rules"])
+    assert world.snapshot()["rules"][0]["why"] == "no suggestions yet"
     for outcome in ("shown", "accepted", "shown", "dismissed", "shown", "ignored"):
-        store.log_offer("soma:share_changes", outcome)
+        store.log_offer("soma:review_changes", outcome)
     store.log_offer("proactive", "accepted")                      # other offers don't count
     snap = world.snapshot()
     assert snap["soma"] == {"shown": 3, "accepted": 1, "dismissed": 1, "ignored": 1}
-    rule = next(r for r in snap["rules"] if "SOMA" in r["when"])
-    assert rule["why"] == "3 shown: 1 done, 1 not now, 1 ignored"
+    assert snap["accept_rate"] == 0.5
+    assert snap["rules"][0]["why"] == "3 shown: 1 done, 1 not now, 1 ignored"
+    assert snap["kinds"] == [{"kind": "soma:review_changes", "label": "Review changes", "shown": 3,
+                              "accepted": 1, "dismissed": 1, "ignored": 1}]
+    assert snap["recent"][0]["kind"] == "Review changes"
+
+
+def test_kinds_you_keep_dismissing_are_muted(mem):
+    store, world, _ = mem
+    for _ in range(3):
+        store.log_offer("soma:write_tests", "dismissed")
+    assert world.muted_kinds() == set()                            # not enough evidence yet
+    store.log_offer("soma:write_tests", "ignored")                 # ignoring is never a "Not now"
+    assert world.muted_kinds() == set()
+    store.log_offer("soma:write_tests", "dismissed")
+    assert world.muted_kinds() == {"soma:write_tests"}
+    store.log_offer("soma:write_tests", "accepted")
+    store.log_offer("soma:write_tests", "accepted")
+    assert world.muted_kinds() == set()                            # 4 of 6 is below 80 %
+    for _ in range(4):
+        store.log_offer("soma:take_notes", "dismissed")
+    snap = world.snapshot()
+    assert snap["muted"] == ["Save notes"]
+    assert any(r["then"] == "Pette doesn't show it any more" for r in snap["rules"])
+    store.clear()
+    assert world.muted_kinds() == set()
+
+
+def test_old_messages_table_is_dropped(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE messages (ts REAL, recipient TEXT, platform TEXT, outcome TEXT)")
+    db.execute("INSERT INTO messages VALUES (1, 'sarah', 'slack', 'sent')")
+    db.commit()
+    db.close()
+    store = Store(path)
+    assert store.query("SELECT name FROM sqlite_master WHERE name = 'messages'") == []
+    store.close()
