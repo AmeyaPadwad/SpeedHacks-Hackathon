@@ -414,8 +414,9 @@ class Bubble(QWidget):
 class BubbleBar(QWidget):
     """SOMA's speech bubble as its own window, docked at the bottom centre of the screen Pette is on."""
 
-    def __init__(self, screen_of=None, avoid=None):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+    def __init__(self, parent=None):
+        # Owned by the Overlay (a Qt parent) so both are destroyed together; Qt.Tool keeps it a separate window.
+        super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setWindowTitle("Pette · SOMA suggestion")
@@ -426,18 +427,18 @@ class BubbleBar(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 8)       # room for the glass shadow
         lay.addWidget(self.bubble)
-        self._screen_of = screen_of or (lambda: QGuiApplication.primaryScreen())
-        self._avoid = avoid or (lambda: None)        # Pette's own window: never cover her
 
     def reanchor(self, change, visible: bool):
         """Apply a bubble change, resize, and dock bottom-centre; show only when there is something to say."""
         change()
         self.bubble.adjustSize()
         self.adjustSize()
-        a = self._screen_of().availableGeometry()
+        owner = self.parentWidget()                # Pette's window: dock on her screen, never cover her
+        screen = QGuiApplication.screenAt(owner.geometry().center()) if owner is not None else None
+        a = (screen or QGuiApplication.primaryScreen()).availableGeometry()
         g = QRect(a.center().x() - self.width() // 2, a.bottom() - self.height() - BAR_MARGIN + 8,
                   self.width(), self.height())
-        pette = self._avoid()
+        pette = owner.geometry() if owner is not None and owner.isVisible() else None
         if pette is not None and g.intersects(pette):   # small screen: slide left of Pette
             g.moveLeft(max(a.left(), pette.left() - g.width() - 8))
         self.setGeometry(g)
@@ -464,7 +465,7 @@ class Overlay(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 14, 14, 8)
         lay.addWidget(self.orb, 0, Qt.AlignHCenter)
-        self.bar = BubbleBar(screen_of=self._screen, avoid=lambda: self.geometry() if self.isVisible() else None)
+        self.bar = BubbleBar(self)    # no closures over self: a Python cycle through a Qt child crashed at GC
         self.bubble = self.bar.bubble
         self.bubble_enabled = True    # Ctrl+Alt+B / tray: the speech bubble (and SOMA's cards) on or off
         self.paused = False
@@ -640,9 +641,6 @@ class Overlay(QWidget):
     def _reanchor(self, change):
         """Apply a bubble change; the bar docks itself at the bottom of the screen Pette is on."""
         self.bar.reanchor(change, visible=self.context_allowed and self.bubble_enabled and not self.paused)
-
-    def _screen(self):
-        return QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
 
     @staticmethod
     def _clamp(g: QRect) -> QRect:
