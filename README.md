@@ -1,6 +1,6 @@
 # Pette - the on-screen face of SOMA
 
-**Pette** is a small animated companion on your desktop. **SOMA** is the brain behind her: it looks at your screen (with your consent), searches the folders you let it index, and ranks what you might want to do next with its own PyTorch model. Pette shows each suggestion as a glass card. Nothing happens until you press **Open** / **Copy** (or pinch).
+**Pette** is a glowing camera orb in the corner of your screen. **SOMA** is the brain behind her: it looks at your screen (with your consent), searches the folders you let it index, and ranks what you might want to do next with its own PyTorch model. Pette shows each suggestion in a glass speech bubble at the bottom of the screen. Nothing happens until you press **Open** / **Copy** (or pinch). Hand gestures also drive your browser: point left / right to switch tabs, pinch and drag to scroll.
 
 Pette is only the UI. She sends no messages, calls no cloud AI and records no audio. SOMA runs locally in its own process ([SOMA/README.md](SOMA/README.md)).
 
@@ -23,7 +23,8 @@ your screen ──► SOMA: capture (consent, exclusions) → OCR → screen + m
 your folders ─┘                                                                                      │
                                                                 localhost API (token) ◄───────────────┘
                                                                         │
-Pette: glass card ("SOMA suggests · Open file")  ── Open / Copy / Not now / pinch ──► feedback back to SOMA
+Pette: speech bubble at the bottom of the screen ("SOMA suggests · Open file")
+       ── Open / Copy / Not now / pinch ──► feedback back to SOMA
 ```
 
 | SOMA sees | Card | Open / Copy does |
@@ -35,21 +36,28 @@ Pette: glass card ("SOMA suggests · Open file")  ── Open / Copy / Not now /
 | A passing test run | *The tests pass: commit your work* | Copies the text |
 | A web page | *Save what you learn from "…" to your notes* | Copies the text |
 
+- **The speech bubble** sits at the bottom centre of the screen Pette is on, with a tail pointing down; `Ctrl+Alt+B` or the tray's **Speech bubble** turns it off (cards wait until it's back on).
 - **Click Pette** (or `Ctrl+Shift+Space`) to have SOMA look at the screen right now; otherwise it checks every couple of seconds and stays quiet most of the time (45 s between cards, no repeats for 5 minutes).
 - A card stays 15 s (a bar drains under it). Ignoring it is not a *Not now*.
 - **Learning:** every answer goes back to SOMA's online ranker. Pette also mutes a kind of suggestion you answer *Not now* to at least 80 % of the time (after 4 answers). The world-model panel shows why.
 - **Opening never runs anything:** VS Code (`code -g file:line`) when its CLI is on PATH, images in their viewer, anything else is only selected in Explorer.
 
-### The camera orb
-A circle above Pette shows **you** (a mirrored webcam preview, processed and drawn locally only), your hand skeleton, and a status ring: blue *Looking*, amber *Suggestion*, green *Done ✓*, grey *Not now*, violet *Indexing*, red *SOMA offline*.
+### Pette, the camera orb
+Pette is the orb (no sprite, no image files). It shows **you** (a mirrored webcam preview, processed and drawn locally only), your hand skeleton, the gesture it sees, and a status ring: blue *Looking*, amber *Suggestion*, green *Done ✓*, grey *Not now*, violet *Indexing*, red *SOMA offline*. Click it to look now; drag it to move her. She dozes (*zZ*) while you're away or paused, and a lid comes down when your eyes close. `Ctrl+Alt+C` hides the camera picture (gestures keep working).
 
-| Webcam signal | Effect |
-|---|---|
-| **Pinch** while a card is up | Same as **Open** / **Copy** |
-| **Away → back** | Pette dozes while you're away; an open card is re-titled *"While you were away · …"* |
-| **Eyes closed** | Pette closes her eyes too |
+### Gestures
+| Gesture | Where | Effect |
+|---|---|---|
+| **Pinch** (thumb to index), held still ~0.5 s | a card is up | Same as **Open** / **Copy** |
+| **Point left** (index finger out to your left, other fingers curled) | browser in front | Previous tab (`Ctrl+Shift+Tab`) |
+| **Point right** | browser in front | Next tab (`Ctrl+Tab`) |
+| **Pinch and drag** up / down | browser in front, pointer over the page | Scrolls touch-style: the page follows your hand |
+| **Away → back** | anywhere | An open card is re-titled *"While you were away · …"* |
+| **Eyes closed** | anywhere | Pette shuts her eyes too |
 
-The camera is on by default. `--no-camera` or the tray turns it off, Pause releases it. Frames are never stored, logged or uploaded.
+Browser gestures only act when a browser (Chrome, Edge, Firefox, Brave, Arc, Opera, Vivaldi, Comet, …) is the foreground app, so they never type into your editor; they send only those two shortcuts and the mouse wheel. Turn them off in the tray. Point once per tab: relax your hand to switch again. A pinch that moves becomes a scroll, never a "Do it".
+
+The camera is on by default. `--no-camera` or the tray turns it off, Pause releases it. Frames are never stored, logged or uploaded; the db gets gesture names and timings only.
 
 ### The world-model panel
 Docked beside Pette: live status, suggestions shown / done / not now per kind (and which are muted), the folders SOMA indexed, the explainable rules in effect, presence over the last 24 hours, and recent kinds + outcomes. Facts only: never the suggestion text, file names or screen content.
@@ -59,7 +67,8 @@ Docked beside Pette: live status, suggestions shown / done / not now per kind (a
 |---|---|---|
 | Ctrl+Shift+Space | Look at my screen now (same as clicking Pette) | `FLOWSTATE_HOTKEY` |
 | Ctrl+Alt+S | SOMA suggestions on / off (off = SOMA stops capturing) | `PETTE_SOMA_HOTKEY` |
-| Ctrl+Alt+C | Hide / show the camera orb (pinch still works) | `PETTE_CAMERA_HOTKEY` |
+| Ctrl+Alt+B | Speech bubble on / off | `PETTE_BUBBLE_HOTKEY` |
+| Ctrl+Alt+C | Hide / show the camera picture in the orb (gestures still work) | `PETTE_CAMERA_HOTKEY` |
 | Ctrl+Alt+W | Hide / show the world-model panel | `PETTE_WORLD_HOTKEY` |
 
 ## Configuration
@@ -80,8 +89,9 @@ Docked beside Pette: live status, suggestions shown / done / not now per kind (a
 |---|---|---|
 | Hub | `pet/soma.py` | `SomaClient` (localhost-only, token) and `Suggester`: polls SOMA, shows cards when Pette is free, look-now, folder add/remove, feedback, muting, capture exclusion. |
 | Do it | `pet/actions.py` | Open a file safely or copy text. Nothing else. |
-| Overlay | `pet/ui.py`, `pet/sprites.py` | Pette, the camera orb, the frosted-glass bubble with the card's time-left bar. |
-| Webcam | `pet/vision.py`, `pet/watcher.py` | MediaPipe face and hand tracking: presence, eyes closed, pinch, the orb preview. |
+| Overlay | `pet/ui.py` | Pette (the orb: click, drag, moods), the bottom-of-screen speech bubble (`BubbleBar`) with the card's time-left bar, the code-drawn tray icon. |
+| Webcam | `pet/vision.py`, `pet/watcher.py` | MediaPipe face and hand tracking: presence, eyes closed, pinch, pointing, pinch-and-drag, the orb preview. |
+| Browser | `pet/browser.py` | Tab switching and scrolling from gestures, only when a browser is in front. |
 | World model | `db/`, `pet/worldview.py`, `web/` | SQLite fact log → explainable rules → the React/shadcn panel. |
 | Focus gate | `pet/focus.py` | Optional (`--focus-only`): show Pette only over VS Code and terminals. |
 | Hotkeys | `pet/hotkeys.py` | Global hotkeys that only emit Qt signals. |
@@ -89,6 +99,7 @@ Docked beside Pette: live status, suggestions shown / done / not now per kind (a
 
 ### Safety rules
 - **Nothing runs by itself.** SOMA only suggests; Pette acts only on Open / Copy / pinch, and opening never executes a file.
+- **Gestures are scoped:** tab and scroll gestures act only on a browser in front, only with Ctrl+(Shift+)Tab and the wheel, never while paused, and can be switched off in the tray.
 - **Screen capture is opt-in** (the launcher), pausable (tray, `Ctrl+Alt+S`), skips password managers, private windows and sign-in prompts, and keeps screenshots in memory only. Pette's own windows are excluded from capture.
 - **Your files:** SOMA indexes only folders you pick, never a whole home directory or drive; removing a folder forgets everything from it. Suggestions only point at files inside those folders.
 - **Pette's db stores facts only:** event names, timings, and which kind of suggestion you answered how ([db/README.md](db/README.md)).
@@ -106,7 +117,7 @@ cd web && npm ci && npm run build                     # rebuild pet/web/index.ht
 ```
 
 ### Manual testing sandbox
-`tools/sandbox.py` runs the real app next to a control panel around a **fake SOMA** (same API, scripted): queue an open-file, your-files or copy-only card, make *look now* find nothing, stop SOMA to see the offline state, simulate webcam events, and watch every request Pette makes. `--real-soma <endpoint file>` points it at the real service. A checklist saves to `test_results/MANUAL_TEST.md`.
+`tools/sandbox.py` runs the real app next to a control panel around a **fake SOMA** (same API, scripted): queue an open-file, your-files or copy-only card, make *look now* find nothing, stop SOMA to see the offline state, simulate webcam events and gestures (tab/scroll ones fire after 3 s so you can bring a browser to the front), and watch every request, key and wheel event Pette sends. `tools/cv_check.py` shows the live gesture signals without sending anything. `--real-soma <endpoint file>` points it at the real service. A checklist saves to `test_results/MANUAL_TEST.md`.
 
 ## Status
 - Pette ↔ SOMA verified live on this machine: SOMA serving real-screen suggestions, Pette showing them as cards.
