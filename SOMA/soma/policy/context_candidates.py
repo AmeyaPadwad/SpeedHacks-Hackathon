@@ -40,12 +40,13 @@ EDITORS = {"code", "code - insiders", "cursor", "windsurf", "pycharm64", "idea64
            "devenv", "sublime_text", "notepad++", "zed", "rider64", "clion64"}
 TERMINALS = {"windowsterminal", "openconsole", "cmd", "powershell", "pwsh", "wezterm-gui", "alacritty",
              "mintty", "conhost", "tabby", "hyper", "warp"}
-BROWSERS = {"chrome", "msedge", "firefox", "brave", "arc", "opera", "vivaldi"}
+BROWSERS = {"chrome", "msedge", "firefox", "brave", "arc", "opera", "vivaldi", "comet", "chromium", "thorium",
+            "zen", "librewolf", "waterfox", "floorp"}
 
 _FILE_RE = re.compile(r"[\w.-]{1,80}\.[A-Za-z][A-Za-z0-9]{0,7}")
 _TESTS_PASS_RE = re.compile(r"\b\d+\s+passed\b|\btests?\s+passed\b|\ball tests pass", re.I)
 _BROWSER_SUFFIX_RE = re.compile(
-    r"\s+[-—|]\s+(google chrome|microsoft​? edge|mozilla firefox|brave|arc|opera|vivaldi).*$", re.I)
+    r"\s+[-—|]\s+(google chrome|microsoft​? edge|mozilla firefox|brave|arc|opera|vivaldi|comet|chromium|zen).*$", re.I)
 
 
 def app_kind(app_name: str) -> str:

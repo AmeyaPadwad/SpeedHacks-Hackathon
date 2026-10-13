@@ -37,7 +37,8 @@ def templates(cands):
 
 @pytest.mark.parametrize("app,kind", [("Code.exe", "editor"), ("cursor.exe", "editor"),
                                       ("WindowsTerminal.exe", "terminal"), ("pwsh", "terminal"),
-                                      ("chrome.exe", "browser"), ("Slack.exe", ""), ("", "")])
+                                      ("chrome.exe", "browser"), ("comet.exe", "browser"),
+                                      ("Slack.exe", ""), ("", "")])
 def test_app_kind(app, kind):
     assert app_kind(app) == kind
 
