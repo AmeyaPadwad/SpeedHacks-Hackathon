@@ -51,6 +51,10 @@ setup() {
         uv pip install --python "$(venv_python "$ROOT/.venv")" -q -r "$ROOT/requirements.txt"
         write_stamp "$ROOT/.venv/.pette-setup" "$ROOT/requirements.txt"
     fi
+    if [[ ! -f "$ROOT/models/face_landmarker.task" || ! -f "$ROOT/models/hand_landmarker.task" ]]; then
+        say "Downloading MediaPipe face/hand models for the camera orb"
+        (cd "$ROOT" && "$(venv_python "$ROOT/.venv")" tools/get_models.py) || say "Model download failed; camera features stay off"
+    fi
 
     # SOMA: CPU PyTorch + capture / OCR extras, in SOMA/.venv.
     if [[ ! -d "$SOMA_DIR/.venv" ]]; then
