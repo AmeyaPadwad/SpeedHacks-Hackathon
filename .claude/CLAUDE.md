@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `README.md` is the spec. **Pette** is only the UI; **SOMA** (`SOMA/`, its own PyTorch package and venv) is the backend. SOMA looks at the screen (with consent) and the folders the user indexed, and ranks next steps. Pette shows each one as a glass card; Open / Copy (or a pinch) is the only way anything happens. Messaging (Slack, Discord, email), Darwin, Groq and voice were removed on purpose; don't bring them back.
 
+Pette has no sprite or image files: the camera orb is her body (click = look now, drag = move, moods drawn on it) and the tray icon is drawn in code. Suggestions show in a speech bubble at the bottom of the screen. Gestures: pinch = Do it, point left/right = previous/next browser tab, pinch-and-drag = browser scroll.
+
 `brainstorming/` holds two reference specs (webcam signals; screen-context companion). They're references only: this is Python + PySide6, not the Electron stack described there.
 
 ## Git workflow
@@ -22,7 +24,7 @@ cd SOMA; .venv/Scripts/python.exe -m pytest -q      # SOMA's own suite
 .venv/Scripts/python.exe tools/run_checks.py [--no-camera] [--no-soma-tests]   # regenerates test_results/
 .venv/Scripts/python.exe tools/sandbox.py [--real-soma EP]   # real app + panel around a scripted fake SOMA
 .venv/Scripts/python.exe tools/get_models.py        # MediaPipe models (gitignored)
-.venv/Scripts/python.exe tools/prep_sprites.py      # rebuild assets/pette_sheet.png (needs Pillow + numpy)
+.venv/Scripts/python.exe tools/cv_check.py          # live webcam/gesture signals (never sends input)
 cd web; npm ci; npm run build                       # rebuild pet/web/index.html (committed) after editing web/src
 ```
 
@@ -40,7 +42,8 @@ Pette and SOMA use separate venvs (`.venv`, `SOMA/.venv`): mediapipe needs openc
 - **Muting** (`WorldModel.muted_kinds`): a kind answered Not now ≥ 80 % over ≥ 4 answers is skipped unless the user clicked "look now".
 - **exclude_from_capture()** keeps Pette's windows out of SOMA's screenshots; apply it to any new top-level window.
 - **Dependency injection:** `Suggester`, `SomaClient`, `actions.open_file`, `Watcher` take collaborators as parameters (client, spawn, clipboard, open_file, request). Tests pass fakes and `spawn=lambda f: f()`; keep a reference to a `Suggester` in tests or Qt drops its connections.
-- **UI** (`pet/ui.py`): bubble → `Orb` → `PetWidget`, bottom-anchored. `Overlay._reanchor` keeps Pette fixed while the bubble resizes; change bubble content only through `Overlay` methods. The bubble is frosted glass (`GLASS_*` alphas). `ANIMATIONS` in `sprites.py` is a contract with `tools/prep_sprites.py`; never load the raw `images/pette-spritesheet.png`.
+- **UI** (`pet/ui.py`): `Overlay` is Pette's window and holds only the `Orb` (click/drag, `set_mood`, `feed_visible`). `Overlay.bar` is a `BubbleBar`, a separate Qt.Tool window parented to the Overlay, docked bottom-centre of Pette's screen; it slides left rather than cover her. Never give the bar closures that capture the Overlay (a Python cycle through a Qt child crashed at GC); it reads its parent instead. Change bubble content only through `Overlay` methods (`say`, `propose`, `dismiss`, `set_progress`); `bar.reanchor` sizes wrapped text by height-for-width. `bubble_enabled` (Ctrl+Alt+B) gates `say`/`propose` and `Suggester._free()`. The bubble is frosted glass (`GLASS_*` alphas).
+- **Gestures** (`pet/vision.py`, `pet/watcher.py`, `pet/browser.py`): `VisionPolicy` is pure logic (pinch hold vs pinch-drag, pointing hold/rearm/cooldown, `take_scroll()`); `pointing()` maps your left to the image's +x. `Watcher` routes POINT_LEFT/RIGHT to `BrowserControl.switch_tab(-1/+1)` and `scroll` amounts to `BrowserControl.scroll`, which acts only when `focus.foreground_info()` is a browser and only with Ctrl+(Shift+)Tab and the wheel. Inject `foreground`/`send_keys`/`wheel` in tests; never send real input from a test.
 - **World-model window** (`pet/worldview.py` + `web/`): React + Tailwind + shadcn/ui + Aceternity, built by Vite into `pet/web/index.html`. Python pushes `WorldModel.snapshot()` + live state + folder names/counts via `window.__pette(json)`. Facts only: never suggestion text, file names or screen content.
 
 ### SOMA side (what Pette relies on)
