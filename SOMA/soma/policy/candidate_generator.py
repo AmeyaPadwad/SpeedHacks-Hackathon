@@ -334,6 +334,7 @@ def generate_candidates(
             text=_cap(f"Open {sanitize_snippet(_basename(ref.path), 80)} at line {ref.line}"),
             target=ref.element,
             file_ref=ref.path,
+            line=ref.line,
             evidence=[_quote(ref.element.text)],
         ))
 

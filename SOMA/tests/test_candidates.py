@@ -298,3 +298,11 @@ def test_encoder_batch_and_grad(small_cfg):
     emb[~mask].sum().backward()
     assert enc.type_embedding.weight.grad is not None
     assert enc.text_bag.weight.grad is not None
+
+
+def test_open_file_candidate_carries_the_line():
+    o = obs_of('File "C:/proj/app/calc.py", line 40, in total', "ZeroDivisionError: division by zero")
+    cands = generate_candidates(o, [], 8, authorized_file=lambda p: p.endswith("calc.py"))
+    opens = [c for c in cands if c.action is ActionType.OPEN_RELEVANT_FILE]
+    assert opens and opens[0].file_ref == "C:/proj/app/calc.py" and opens[0].line == 40
+    assert "|40" not in opens[0].key                               # the line never changes the dedupe key

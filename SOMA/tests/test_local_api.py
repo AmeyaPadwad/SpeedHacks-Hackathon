@@ -152,3 +152,82 @@ def test_build_memory_script_requires_grant(tmp_path: Path):
     assert "verified=True" in out.getvalue()
     out = io.StringIO()
     assert main(["--folder", str(Path.home()), "--data-dir", str(data), "--grant"], out) == 2
+
+
+# ------------------------------------------------------------ companion UI endpoints
+
+
+def wait_indexed(api, token, timeout=30.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        _, body = call(api, "GET", "/folders", token)
+        if not body["indexing"]:
+            return body
+        time.sleep(0.05)
+    raise AssertionError("indexing did not finish")
+
+
+def test_folders_add_index_list_and_remove(env, tmp_path):
+    rt, mem, api, _ = env
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    (folder / "retries.md").write_text("HTTP retries with exponential backoff and timeouts", encoding="utf-8")
+    code, body = call(api, "POST", "/folders", api.token, {"path": str(folder)})
+    assert code == 200 and body["indexing"] is True
+    listing = wait_indexed(api, api.token)
+    assert listing["folders"] == [{"path": str(folder.resolve()), "memories": 1}]
+    assert listing["last_report"]["added"] == 1
+    assert rt.consent.allowed(Scope.FOLDER_INDEXING)
+
+    code, body = call(api, "POST", "/folders/remove", api.token, {"path": str(folder)})
+    assert code == 200 and body["forgotten"] == 1
+    _, listing = call(api, "GET", "/folders", api.token)
+    assert listing["folders"] == [] and mem.store.count_items() == 0
+
+
+def test_folders_refuse_bad_input(env, tmp_path):
+    _, _, api, _ = env
+    assert call(api, "POST", "/folders", api.token, {"path": str(Path.home())})[0] == 400   # whole home dir
+    assert call(api, "POST", "/folders", api.token, {"path": str(tmp_path / "missing")})[0] == 400
+    assert call(api, "POST", "/folders", api.token, {})[0] == 400
+    assert call(api, "POST", "/folders", None, {"path": str(tmp_path)})[0] == 401
+
+
+def test_trigger_needs_a_scheduler_and_no_pause(env):
+    rt, _, api, _ = env
+
+    class Sched:
+        n = 0
+
+        def trigger_now(self):
+            Sched.n += 1
+
+        def pause(self):
+            rt.pause()
+
+        def resume(self):
+            rt.resume()
+
+    assert call(api, "POST", "/trigger", api.token, {})[1] == {"triggered": False}   # no scheduler
+    api.scheduler = Sched()
+    assert call(api, "POST", "/trigger", api.token, {})[1] == {"triggered": True} and Sched.n == 1
+    call(api, "POST", "/pause", api.token, {})
+    assert call(api, "POST", "/trigger", api.token, {})[1] == {"triggered": False}
+
+
+def test_suggestion_carries_openable_paths_only_inside_allowed_folders(env, tmp_path):
+    from soma.api.local_api import _memory_source
+    from soma.types import MemoryItem, SourceType
+    rt, mem, api, _ = env
+    inside = tmp_path / "ok"
+    inside.mkdir()
+    (inside / "a.md").write_text("x", encoding="utf-8")
+    rt.consent.add_folder(inside)
+    rt.consent.grant(Scope.FOLDER_INDEXING)
+    good = mem.store.upsert_item(MemoryItem(id="m1", source_type=SourceType.DOCUMENT, user_approved=True,
+                                            source_uri=str((inside / "a.md").resolve()), text_summary="a"))
+    bad = mem.store.upsert_item(MemoryItem(id="m2", source_type=SourceType.DOCUMENT, user_approved=True,
+                                           source_uri=str(tmp_path / "elsewhere.md"), text_summary="b"))
+    assert _memory_source(rt, good.id) == str((inside / "a.md").resolve())
+    assert _memory_source(rt, bad.id) is None and _memory_source(rt, None) is None

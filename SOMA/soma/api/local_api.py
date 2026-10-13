@@ -7,8 +7,9 @@
   permissions. Tokens are compared in constant time.
 * Requests with a non-loopback peer or a ``Host`` header that is not a
   loopback name are rejected (DNS-rebinding guard).
-* No endpoint executes actions. Feedback, pause/resume and memory deletion are
-  the only mutations, and they are the same user controls the desktop UI has.
+* No endpoint executes actions. Feedback, pause/resume, look-now, folder
+  allow/remove and memory deletion are the only mutations, and they are the same
+  user controls the desktop UI has (a folder is only added when the user picks it).
 
 Endpoints::
 
@@ -17,6 +18,10 @@ Endpoints::
     POST   /feedback          {"suggestion_id", "outcome", "edited_text"?}
     POST   /pause             pause capture now
     POST   /resume            resume capture
+    POST   /trigger           look at the screen now (one forced step; consent gates still apply)
+    GET    /folders           allowed folders, their memory counts and the indexing state
+    POST   /folders           {"path"}: allow one user-chosen folder and index it in the background
+    POST   /folders/remove    {"path"}: disallow a folder and forget every memory from it
     GET    /memories          memory-viewer rows
     DELETE /memories/<id>     forget everywhere + verify
 """
@@ -34,8 +39,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from soma.consent import Scope
-from soma.memory.deletion import forget, verify_deleted
+from soma.consent import ConsentError, Scope
+from soma.memory.deletion import forget, forget_source, verify_deleted
 from soma.memory.export import list_for_viewer
 from soma.types import FeedbackOutcome
 
@@ -64,8 +69,22 @@ def write_token(path: str | Path, token: str) -> Path:
     return p
 
 
+def _memory_source(runtime: Any, memory_ref: str | None) -> str | None:
+    """The file behind a memory, only when it is still an authorized file (so a UI may open it)."""
+    store = getattr(getattr(runtime, "memory", None), "store", None)
+    if not memory_ref or store is None:
+        return None
+    item = store.get_item(memory_ref)
+    uri = getattr(item, "source_uri", None)
+    check = getattr(runtime, "authorized_file", None)
+    return uri if uri and callable(check) and check(uri) else None
+
+
 def suggestion_payload(runtime: Any) -> dict[str, Any]:
-    """Latest suggestion as JSON-safe data: no OCR text beyond the suggestion itself."""
+    """Latest suggestion as JSON-safe data: no OCR text beyond the suggestion itself.
+
+    ``file`` / ``line`` / ``memory_source`` are paths inside the user's allowed folders only, so a
+    companion UI can offer to open them. Nothing is opened or executed here."""
     r = runtime.last_result
     if r is None:
         return {"available": False, "silent": True}
@@ -80,7 +99,8 @@ def suggestion_payload(runtime: Any) -> dict[str, Any]:
         c = s.candidate
         out.update(action=c.action.value, text=c.text, evidence=list(c.evidence),
                    target_box=list(c.target.bbox_xyxy_normalized) if c.target else None,
-                   memory_ref=c.memory_ref, template=c.template)
+                   memory_ref=c.memory_ref, template=c.template, file=c.file_ref, line=c.line,
+                   memory_source=_memory_source(runtime, c.memory_ref))
     return out
 
 
@@ -157,6 +177,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/memories":
             store = api.store
             self._send(200, {"memories": list_for_viewer(store) if store is not None else []})
+        elif path == "/folders":
+            self._send(200, api.folders())
         else:
             self._send(404, {"error": "not found"})
 
@@ -173,6 +195,19 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/resume":
             api.runtime_resume()
             self._send(200, {"paused": api.runtime.paused})
+        elif path == "/trigger":
+            self._send(200, {"triggered": api.trigger()})
+        elif path in ("/folders", "/folders/remove"):
+            folder = data.get("path")
+            if not isinstance(folder, str) or not folder.strip():
+                self._send(400, {"error": "path (string) required"})
+                return
+            try:
+                result = api.add_folder(folder) if path == "/folders" else api.remove_folder(folder)
+            except (ConsentError, NotADirectoryError, ValueError) as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            self._send(200, result)
         elif path == "/feedback":
             sid = data.get("suggestion_id")
             edited = data.get("edited_text")
@@ -256,6 +291,9 @@ class LocalAPIServer:
         self.requested_port = int(port)
         self.token_path = Path(token_path) if token_path else None
         self.token = ""
+        self._index_lock = threading.Lock()
+        self._indexing: str | None = None
+        self._last_report: dict[str, Any] = {}
         self._server: _Server | None = None
         self._thread: threading.Thread | None = None
 
@@ -281,6 +319,54 @@ class LocalAPIServer:
 
     def runtime_resume(self) -> None:
         (self.scheduler or self.runtime).resume()
+
+    def trigger(self) -> bool:
+        """Look at the screen now: the scheduler runs one forced step (never while paused)."""
+        if self.scheduler is not None and not self.runtime.paused:
+            self.scheduler.trigger_now()
+            return True
+        return False
+
+    # -- folders (the user picks them in a UI; nothing is indexed otherwise)
+    def folders(self) -> dict[str, Any]:
+        consent, store = self.runtime.consent, self.store
+        rows = [{"path": f, "memories": len(store.items_under(f)) if store is not None else 0}
+                for f in consent.allowed_folders]
+        with self._index_lock:
+            return {"folders": rows, "indexing": self._indexing, "last_report": dict(self._last_report)}
+
+    def add_folder(self, folder: str) -> dict[str, Any]:
+        mem = self.memory
+        if mem is None or getattr(mem, "ingestor", None) is None:
+            raise ValueError("no memory store")
+        p = Path(folder).expanduser().resolve()
+        if not p.is_dir():
+            raise NotADirectoryError(f"not a folder: {p}")
+        consent = self.runtime.consent
+        consent.add_folder(p)              # refuses a home directory or drive root
+        consent.grant(Scope.FOLDER_INDEXING)
+        with self._index_lock:
+            self._indexing = str(p)
+        threading.Thread(target=self._index, args=(p,), name="soma-index", daemon=True).start()
+        return {"path": str(p), "indexing": True}
+
+    def _index(self, folder: Path) -> None:
+        report: dict[str, Any] = {"path": str(folder)}
+        try:
+            r = self.memory.ingestor.ingest_folder(folder)
+            report.update(added=len(r.added), updated=len(r.updated), unchanged=len(r.unchanged),
+                          skipped=len(r.skipped), errors=len(r.errors))
+        except Exception as exc:  # noqa: BLE001 - reported to the UI, never raised on a thread
+            report["error"] = type(exc).__name__
+        with self._index_lock:
+            self._indexing = None
+            self._last_report = report
+
+    def remove_folder(self, folder: str) -> dict[str, Any]:
+        p = Path(folder).expanduser().resolve()
+        self.runtime.consent.remove_folder(p)
+        removed = forget_source(self.memory.store, self.memory.index, p) if self.memory is not None else 0
+        return {"path": str(p), "forgotten": removed}
 
     def status(self) -> dict[str, Any]:
         rt = self.runtime

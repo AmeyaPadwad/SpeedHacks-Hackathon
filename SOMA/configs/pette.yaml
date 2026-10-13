@@ -1,4 +1,4 @@
-# SOMA as Pette's on-screen companion (scripts/serve.py, run_pette_soma.sh).
+# SOMA as the backend behind Pette's UI (scripts/serve.py, run_pette_soma.sh).
 #
 # dev.yaml is tuned for a trained model: the gate wants p >= 0.55 before it speaks.
 # Until there is a checkpoint trained on real, consented sessions, the untrained
@@ -10,7 +10,7 @@
 #     not veto), and relies on the cooldown + duplicate window to keep
 #     interruptions rare. Dismissals still suppress a suggestion, and accept /
 #     dismiss feedback trains the online ranker when feedback storage is granted.
-# Nothing is executed: Pette shows the suggestion and only acts if you accept it.
+# Nothing is executed: Pette shows the suggestion; "Do it" only opens a file in your allowed folders or copies the text.
 device: auto
 model:
   d_model: 256
