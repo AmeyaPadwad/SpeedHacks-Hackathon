@@ -1,12 +1,13 @@
-"""World-model window: a panel docked beside Pette showing what she has learned (db/world_model.py)
-and the behaviour each fact drives, plus the live workflow status.
+"""World-model window: a panel docked beside Pette showing what she has learned (db/world_model.py),
+the behaviour each fact drives, SOMA's indexed folders, and the live status.
 
 The UI is a React + Tailwind + shadcn/ui page (web/ -> built to pet/web/index.html as one file) shown in
 Qt WebEngine. Python pushes `WorldModel.snapshot()` + live state as JSON via `window.__pette(data)`.
-Facts only: no message text, code, audio or frames are ever passed to the page.
+Facts only: no suggestion text, screen content, file contents or frames are ever passed to the page.
 """
 import json
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QGuiApplication
@@ -34,13 +35,13 @@ class _Follow(QObject):
 
 
 class WorldWindow(QWidget):
-    def __init__(self, overlay, world, pipeline=None, watcher=None, *, web=True):
+    def __init__(self, overlay, world, suggester=None, watcher=None, *, web=True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setWindowTitle("Pette · world model")
         self.resize(WIDTH, HEIGHT)
-        self.overlay, self.world, self.pipeline, self.watcher = overlay, world, pipeline, watcher
+        self.overlay, self.world, self.suggester, self.watcher = overlay, world, suggester, watcher
         self.state, self.detail = "idle", ""
         self.view = None
         self._ready = False
@@ -63,8 +64,9 @@ class WorldWindow(QWidget):
                                         "padding:14px;font-family:'Segoe UI';font-size:13px;color:#09090b;")
             lay.addWidget(self.fallback)
         overlay.installEventFilter(_Follow(self))
-        if pipeline is not None:
-            pipeline.status.connect(self.on_status)
+        if suggester is not None:
+            suggester.status.connect(self.on_status)
+            suggester.folders_changed.connect(lambda _: self.refresh())
         self._timer = QTimer(self, interval=REFRESH_MS, timeout=self.refresh)
 
     # --- visibility / docking ----------------------------------------------
@@ -107,8 +109,12 @@ class WorldWindow(QWidget):
             "present": bool(self.watcher.present) if self.watcher else True,
             "eyes_closed": bool(self.watcher.eyes_closed) if self.watcher else False,
             "paused": self.overlay.paused,
+            "suggestions": bool(self.suggester.enabled) if self.suggester else False,
             "now": time.time(),
         }
+        snap["folders"] = [{"name": Path(f["path"]).name or f["path"], "path": f["path"],
+                            "memories": int(f.get("memories", 0))}
+                           for f in (self.suggester.folders if self.suggester else [])]
         return snap
 
     def refresh(self):

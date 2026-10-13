@@ -10,8 +10,8 @@ still applies.
 
 Same safety rules as the generator: the text is a fixed template, screen text
 appears only as a short sanitized quote, injection-like titles are dropped,
-and nothing here executes. ``Candidate.template`` carries the template id so a
-companion app (Pette) can map an *accepted* suggestion to its own workflow.
+and nothing here executes. ``Candidate.template`` names the template so a UI
+(Pette) and the feedback log can tell them apart.
 """
 
 from __future__ import annotations
@@ -29,12 +29,11 @@ from soma.policy.candidate_generator import (
 )
 from soma.types import ActionType, Candidate, ScreenObservation
 
-SHARE_CHANGES = "share_changes"
-ASK_REVIEW = "ask_review"
-TESTS_PASS = "tests_pass"
-ASK_ABOUT_ERROR = "ask_about_error"
-SEARCH_TOOLS = "search_tools"
-TEMPLATES = (SHARE_CHANGES, ASK_REVIEW, TESTS_PASS, ASK_ABOUT_ERROR, SEARCH_TOOLS)
+WRITE_TESTS = "write_tests"
+REVIEW_CHANGES = "review_changes"
+COMMIT_WORK = "commit_work"
+TAKE_NOTES = "take_notes"
+TEMPLATES = (WRITE_TESTS, REVIEW_CHANGES, COMMIT_WORK, TAKE_NOTES)
 
 EDITORS = {"code", "code - insiders", "cursor", "windsurf", "pycharm64", "idea64", "webstorm64",
            "devenv", "sublime_text", "notepad++", "zed", "rider64", "clion64"}
@@ -46,7 +45,8 @@ BROWSERS = {"chrome", "msedge", "firefox", "brave", "arc", "opera", "vivaldi", "
 _FILE_RE = re.compile(r"[\w.-]{1,80}\.[A-Za-z][A-Za-z0-9]{0,7}")
 _TESTS_PASS_RE = re.compile(r"\b\d+\s+passed\b|\btests?\s+passed\b|\ball tests pass", re.I)
 _BROWSER_SUFFIX_RE = re.compile(
-    r"\s+[-—|]\s+(google chrome|microsoft​? edge|mozilla firefox|brave|arc|opera|vivaldi|comet|chromium|zen).*$", re.I)
+    r"\s+[-—|]\s+(google chrome|microsoft​? edge|mozilla firefox|brave|arc|opera|vivaldi|comet|chromium|zen).*$",
+    re.I)
 
 
 def app_kind(app_name: str) -> str:
@@ -87,37 +87,32 @@ def context_candidates(obs: ScreenObservation) -> list[Candidate]:
     has_error = any(detect_role(e) == ROLE_ERROR for e in obs.elements)
     out: list[Candidate] = []
 
-    if kind in ("editor", "terminal") and has_error:
-        out.append(Candidate(
-            action=ActionType.ASK_CLARIFYING_QUESTION,
-            text="Ask the team for help with the error on screen?",
-            evidence=["an error is visible"], template=ASK_ABOUT_ERROR))
-
     if kind == "editor":
         f = editor_file(obs.window.title)
         label = _quote(f, 60) if f else "this file"
         out.append(Candidate(
             action=ActionType.SUGGEST_NEXT_STEP,
-            text=_cap(f"Send the team a summary of your changes to {label}"),
-            evidence=[f"editing {label}"], template=SHARE_CHANGES))
-        out.append(Candidate(
-            action=ActionType.SUGGEST_NEXT_STEP,
-            text=_cap(f"Ask a teammate to review {label}"),
-            evidence=[f"editing {label}"], template=ASK_REVIEW))
+            text=_cap(f"Review your changes to {label} before you commit"),
+            evidence=[f"editing {label}"], template=REVIEW_CHANGES))
+        if not has_error:
+            out.append(Candidate(
+                action=ActionType.SUGGEST_NEXT_STEP,
+                text=_cap(f"Write a test for the code in {label}"),
+                evidence=[f"editing {label}"], template=WRITE_TESTS))
 
     if kind == "terminal" and not has_error and any(_TESTS_PASS_RE.search(t) for t in texts):
         out.append(Candidate(
             action=ActionType.SUGGEST_NEXT_STEP,
-            text="Tell the team the tests pass",
-            evidence=["test run passed"], template=TESTS_PASS))
+            text="The tests pass: commit your work",
+            evidence=["test run passed"], template=COMMIT_WORK))
 
     if kind == "browser":
         topic = page_topic(obs.window.title)
         if topic:
             out.append(Candidate(
                 action=ActionType.SUGGEST_NEXT_STEP,
-                text=_cap(f"Search Darwin for tools related to {_quote(topic, 60)}"),
-                evidence=[topic], template=SEARCH_TOOLS))
+                text=_cap(f"Save what you learn from {_quote(topic, 60)} to your notes"),
+                evidence=[topic], template=TAKE_NOTES))
     return out
 
 

@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Run Pette with SOMA watching the screen and suggesting actions.
+# Run SOMA (the backend: screen + your indexed files -> next-step suggestions) and Pette (its UI).
 #
 #   ./run_pette_soma.sh                 # set up both venvs if needed, start SOMA, then Pette
-#   ./run_pette_soma.sh --demo          # extra flags go to Pette (main.py): --demo, --always-show, --no-camera ...
+#   ./run_pette_soma.sh --focus-only    # extra flags go to Pette (main.py): --focus-only, --no-camera, --no-world
 #   ./run_pette_soma.sh --diagnose      # one SOMA step on the current screen: why it would speak or stay silent
 #
 # Running this script is your opt-in for SOMA to capture the screen (consent is stored in
 # SOMA/data/consent.json; revoke it there or with SOMA's desktop UI). Screenshots stay in memory, are
 # never written to disk, and password managers / private windows / sign-in prompts are skipped.
-# Suggestions appear only while Pette is on screen (VS Code and terminals; --always-show for every app)
-# and nothing runs until you click "Do it".
+# Pette shows SOMA's suggestions as cards over any app (--focus-only: VS Code and terminals only). Nothing
+# happens until you press Open / Copy (or pinch): Open shows a file from your indexed folders, Copy copies text.
+# Add folders for SOMA to learn from in Pette's tray ("Add a folder for SOMA..."); remove them there too.
 #
 # Env: SOMA_CONFIG (default configs/pette.yaml), SOMA_CHECKPOINT, SOMA_INTERVAL (s, default 2),
 #      SOMA_SYNTHETIC=1 (synthetic screens instead of yours), SKIP_SETUP=1 (don't touch the venvs).
-# Hotkeys: Ctrl+Shift+Space talk, Ctrl+Alt+S suggestions on/off, Ctrl+Alt+C camera, Ctrl+Alt+W world panel.
+# Hotkeys: Ctrl+Shift+Space look now, Ctrl+Alt+S suggestions on/off, Ctrl+Alt+C camera, Ctrl+Alt+W world panel.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,10 +84,6 @@ if [[ "${1:-}" == "--diagnose" ]]; then
     say "One SOMA step on your current screen (switch to the window you want checked within 3 s)"
     sleep 3
     cd "$SOMA_DIR" && PYTHONIOENCODING=utf-8 exec "$SOMA_PY" -m scripts.serve "${soma_args[@]}" --once
-fi
-
-if [[ ! -f "$ROOT/.env" && -z "${GROQ_API_KEY:-}" && " $* " != *" --demo "* ]]; then
-    say "No .env / GROQ_API_KEY: SOMA suggestions will show, but drafting needs Groq (or pass --demo)."
 fi
 
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pette-soma.XXXXXX")"

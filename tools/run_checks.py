@@ -1,8 +1,8 @@
 """Run every Pette check and write test_results/REPORT.md (+ junit.xml and UI screenshots).
 
-    py tools/run_checks.py                 # all checks except ones with outside side effects
-    py tools/run_checks.py --webhooks      # also post a labelled test message to Slack/Discord
-    py tools/run_checks.py --no-camera
+    py tools/run_checks.py                 # everything (SOMA's own suite too, if SOMA/.venv exists)
+    py tools/run_checks.py --no-camera     # skip the live webcam check
+    py tools/run_checks.py --no-soma-tests # skip SOMA's pytest suite (a few minutes on CPU)
 
 Live checks report numbers only: no camera frames, screen images or file contents are saved.
 """
@@ -52,11 +52,9 @@ def check(name):
 def env_check():
     import cv2
     import mediapipe
-    import openai
     import PySide6
     record("Environment", "INFO", f"Windows {platform.release()} ({platform.version()}), Python {platform.python_version()}, "
-           f"PySide6 {PySide6.__version__}, OpenCV {cv2.__version__}, MediaPipe {mediapipe.__version__}, "
-           f"openai {openai.__version__}")
+           f"PySide6 {PySide6.__version__}, OpenCV {cv2.__version__}, MediaPipe {mediapipe.__version__}")
 
 
 @check("Unit + integration tests")
@@ -145,115 +143,53 @@ def focus_check():
            f"{'show Pette' if verdict else 'hide Pette' if verdict is False else 'neutral'}")
 
 
-@check("VS Code bridge snapshot")
-def bridge_check():
-    from pet.context import ACTIVE_FILE, read_active_file
-    af = read_active_file()
-    if af is None:
-        record("VS Code bridge snapshot", "SKIP", f"no snapshot at ~/{ACTIVE_FILE.name} (extension not installed or no file open)")
-        return
-    age = time.time() - ACTIVE_FILE.stat().st_mtime
-    record("VS Code bridge snapshot", "PASS", f"{Path(af.path).name} ({af.language}), {len(af.diagnostics)} diagnostic(s), "
-           f"updated {age:.0f}s ago")
-
-
 @check("db cache + world model")
 def db_check():
     from db import Store, WorldModel
     with tempfile.TemporaryDirectory() as d:
         s = Store(Path(d) / "c.sqlite3")
         w = WorldModel(s)
-        s.log_message("sarah", "slack", "sent")
+        for _ in range(4):
+            s.log_offer("soma:write_tests", "dismissed")
         s.log_event("away_ended", 5.0)
-        ok = w.preferred_platform("Sarah") == "slack" and w.presence_today()["away_episodes"] == 1
+        ok = w.muted_kinds() == {"soma:write_tests"} and w.presence_today()["away_episodes"] == 1
         s.close()
     record("db cache + world model", "PASS" if ok else "FAIL", "write -> learn -> read round trip in a temp db")
 
 
-@check("Groq (chat + Whisper)")
-def openai_check():
-    from pet import llm
-    name = f"Groq ({llm.chat_model()} / {llm.stt_model()})"
-    client = llm.client(20)
-    if client is None:
-        record(name, "SKIP", f"{llm.KEY_VAR} not set")
+SOMA_DIR = ROOT / "SOMA"
+SOMA_PY = SOMA_DIR / ".venv" / "Scripts" / "python.exe"
+
+
+@check("SOMA service (synthetic screen)")
+def soma_check():
+    """One SOMA step on a synthetic screen through the same serve script Pette's launcher uses."""
+    name = "SOMA service (synthetic screen)"
+    if not SOMA_PY.exists():
+        record(name, "SKIP", "SOMA/.venv missing: run ./run_pette_soma.sh once")
         return
-    try:
-        client.chat.completions.create(model=llm.chat_model(), max_tokens=1, messages=[{"role": "user", "content": "hi"}])
-        record(name, "PASS", "1-token request succeeded")
-    except Exception as e:
-        record(name, "FAIL", llm.describe_error(e) + " (app falls back to labelled local analysis)")
+    with tempfile.TemporaryDirectory() as d:   # temp data dir: no consent or memory touches SOMA/data
+        t = time.time()
+        p = subprocess.run([str(SOMA_PY), "-m", "scripts.serve", "--config", "configs/pette.yaml", "--synthetic",
+                            "--once", "--grant-screen", "--data-dir", d], cwd=SOMA_DIR, capture_output=True,
+                           text=True, timeout=300, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    decision = next((ln for ln in p.stdout.splitlines() if ln.startswith("decision:")), "")
+    ok = p.returncode == 0 and decision
+    record(name, "PASS" if ok else "FAIL",
+           f"{time.time() - t:.1f}s, {decision[:120]}" if ok else (p.stderr or p.stdout)[-300:])
 
 
-@check("ElevenLabs transcription")
-def eleven_check():
-    """Speak a known sentence with Windows' built-in TTS, stream it as the 'mic', and compare the transcript."""
-    import wave
-
-    from pet import eleven
-    name = "ElevenLabs transcription"
-    settings = eleven.Settings.from_env()
-    if settings is None:
-        record(name, "SKIP", "ELEVENLABS_AGENT_ID / ELEVENLABS_API_KEY not set (or FLOWSTATE_VOICE=whisper)")
+@check("SOMA tests")
+def soma_tests_check():
+    name = "SOMA tests"
+    if not SOMA_PY.exists():
+        record(name, "SKIP", "SOMA/.venv missing")
         return
-    said = "Send a Slack message to Sarah saying the dashboard bug is fixed."
-    wav_path = Path(tempfile.mkdtemp()) / "said.wav"
-    ps = ("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-          "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo 16000, "
-          "([System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen), ([System.Speech.AudioFormat.AudioChannel]::Mono); "
-          f"$s.SetOutputToWaveFile('{wav_path}', $f); $s.Speak('{said}'); $s.Dispose()")
-    import shutil
-    shell = shutil.which("powershell") or str(
-        Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe")
-    subprocess.run([shell, "-NoProfile", "-Command", ps], check=True, capture_output=True, timeout=60)
-    speech = wave.open(str(wav_path)).readframes(10 ** 9)
     t = time.time()
-    if settings.mode == "scribe":
-        import io
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000), w.writeframes(speech)
-        text = eleven.scribe(buf.getvalue(), settings.api_key)
-    else:
-        class WavMic:
-            def __init__(self):
-                self.buf = b"\0\0" * 16000 + speech + b"\0\0" * 16000 * 20
-
-            def open(self):
-                pass
-
-            def read(self, frames):
-                time.sleep(frames / 16000)
-                chunk, self.buf = self.buf[:frames * 2], self.buf[frames * 2:]
-                return chunk or b"\0\0" * frames
-
-            def close(self):
-                pass
-        text = eleven.LiveTranscriber(settings, audio=WavMic()).run()
-    words = lambda s: set(re.findall(r"[a-z]+", s.lower()))
-    recall = len(words(said) & words(text)) / len(words(said))
-    detail = f"{settings.mode} mode, {time.time() - t:.1f}s: “{text}” ({recall:.0%} of words)"
-    if recall >= 0.8:
-        record(name, "PASS", detail)
-    elif settings.mode == "live":
-        record(name, "FAIL", detail + ". The agent's spoken greeting swallows the start of the command: clear "
-                                      "'First message' in the ElevenLabs agent, or set ELEVENLABS_API_KEY for Scribe")
-    else:
-        record(name, "FAIL", detail)
-
-
-@check("Slack / Discord webhooks")
-def webhook_check(enabled):
-    from pet.brain import Draft
-    from pet.dispatch import configured, dispatch
-    for p in ("slack", "discord"):
-        if not configured(p):
-            record(f"{p.title()} webhook", "SKIP", "not configured")
-        elif not enabled:
-            record(f"{p.title()} webhook", "SKIP", "configured; live post skipped (run with --webhooks)")
-        else:
-            msg = dispatch(Draft(p, "team", "", "[Pette check] Automated webhook test. Ignore."), {})
-            record(f"{p.title()} webhook", "PASS", msg)
+    p = subprocess.run([str(SOMA_PY), "-m", "pytest", "-q", "-o", "addopts=", "-p", "no:cacheprovider"], cwd=SOMA_DIR,
+                       capture_output=True, text=True, timeout=1800)
+    last = (p.stdout.strip().splitlines() or ["?"])[-1]
+    record(name, "PASS" if p.returncode == 0 else "FAIL", f"{last} ({time.time() - t:.0f}s)")
 
 
 @check("UI states (screenshots)")
@@ -262,32 +198,49 @@ def ui_check(app):
     from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 
     from db import Store, WorldModel
-    from pet.brain import OfflineBrain
-    from pet.context import ActiveFile, Context
-    from pet.pipeline import Pipeline
-    from pet.ui import Overlay, Proposal
-    from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK
+    from pet import soma
+    from pet.ui import Overlay
+    from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
     from pet.watcher import Watcher
     from pet.worldview import WorldWindow
-    import pet.pipeline as pp
-    pp.MIN_INTERVAL_S = 0
 
     SHOTS.mkdir(parents=True, exist_ok=True)
     tmp = tempfile.mkdtemp()
     store = Store(Path(tmp) / "c.sqlite3")
     world = WorldModel(store)
-    for _ in range(3):
-        store.log_message("sarah", "slack", "sent")
+    for outcome in ("shown", "accepted", "shown", "accepted", "shown", "dismissed"):
+        store.log_offer("soma:open_relevant_file", outcome)
+    for _ in range(4):
+        store.log_offer("soma:take_notes", "dismissed")
     store.log_event("away_ended", 18.0)
-    af = ActiveFile("C:/repo/dashboard.py", "python", "x = 1\n")
-    diff = "--- a/dashboard.py\n+++ b/dashboard.py\n+    if user is None:\n+        return 'Unknown user'"
+
+    class Fake:                                   # SOMA's API, scripted; nothing leaves this process
+        queue: list = []
+
+        def suggestion(self):
+            return self.queue.pop(0) if self.queue else {"available": True, "silent": True}
+
+        def trigger(self):
+            return {"triggered": True}
+
+        def folders(self):
+            return {"folders": [{"path": "C:/Users/you/notes", "memories": 42}], "indexing": None}
+
+        def __getattr__(self, name):              # feedback / pause / resume
+            return lambda *a, **k: {}
+
+    def card(**kw):
+        Fake.queue.append({"available": True, "silent": False, "valid": True, "id": str(len(Fake.queue)) + kw["text"],
+                           "evidence": [], "template": "", "file": None, "line": None, "memory_source": None, **kw})
+        sug.poll_once()
+        app.processEvents()
 
     o = Overlay(tray=False)
-    p = Pipeline(o, OfflineBrain(), use_voice=False, spawn=lambda f: f(), capture=lambda: Context(af, diff),
-                 send=lambda d: f"Sent to {d.recipient} on {d.platform.title()}.", configured=lambda _: True,
-                 memory=store, world=world, send_delay_s=4)
+    sug = soma.Suggester(o, Fake(), memory=store, world=world, spawn=lambda f: f(), clipboard=lambda t: None,
+                         open_file=lambda path, line=None: f"Opened calc.py at line {line} in VS Code.")
     w = Watcher(o, memory=store, world=world)
-    win = WorldWindow(o, world, p, w)
+    win = WorldWindow(o, world, sug, w)
+    sug.refresh_folders()
     o.place_default()
     o.show()
     shots = []
@@ -306,24 +259,18 @@ def ui_check(app):
         o.set_camera_indicator(True)
         o.orb.set_frame({"image": img, "hand": hand, "gesture": gesture})
 
-    def tick_all():
-        while p._countdown.isActive():
-            p._tick()
-
     steps = [
         ("idle, camera off", lambda: None),
         ("camera: you + hand", lambda: camera("")),
         ("away", lambda: w.on_vision_event(FACE_AWAY)),
         ("eyes closed", lambda: (w.on_vision_event(FACE_BACK), w.on_vision_event(EYES_CLOSED))),
-        ("click = talk", lambda: (w.on_vision_event(EYES_OPEN), p.trigger(),
-                                  o.bubble.input.setText("message Sarah what I changed"))),
-        ("draft + countdown", lambda: (camera("pinch"), o.bubble.primary.click())),
-        ("sent", tick_all),
-        ("cancelled", lambda: (o.dismiss(), p.trigger(), o.bubble.input.setText("Slack Sarah the fix"),
-                               o.bubble.primary.click(), o.bubble.cancel.click())),
-        ("SOMA suggestion (glass)", lambda: (o.dismiss(), camera(""), o.propose(Proposal(
-            "SOMA suggests · Next step", 'Send the team a summary of your changes to "dashboard.py"', "Do it",
-            cancel_label="Not now")))),
+        ("click = look now", lambda: (w.on_vision_event(EYES_OPEN), o.pet.clicked.emit())),
+        ("card: open file", lambda: card(action="OPEN_RELEVANT_FILE", text="Open calc.py at line 40",
+                                         file="C:/repo/calc.py", line=40)),
+        ("pinch = Do it", lambda: (camera("pinch"), w.on_vision_event(PINCH))),
+        ("card: next step", lambda: (camera(""), card(action="SUGGEST_NEXT_STEP", template="review_changes",
+                                                      text='Review your changes to "calc.py" before you commit'))),
+        ("not now", lambda: o.bubble.cancel.click()),
         ("camera hidden (Ctrl+Alt+C)", lambda: (o.dismiss(), o.set_camera_visible(False))),
         ("paused", lambda: (o.set_camera_visible(True), o.set_paused(True))),
     ]
@@ -401,7 +348,7 @@ def write_report(started: float):
     if (OUT / "ui_states.png").exists():
         lines += ["", "## UI states", "", "![Pette UI states](ui_states.png)"]
     lines += ["", "Privacy: live checks record counts and timings only. No camera frames, screen images, file "
-              "contents or message text were saved."]
+              "contents or suggestion text were saved. SOMA's check runs on a synthetic screen in a temp data dir."]
     (OUT / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (OUT / "results.json").write_text(json.dumps([{"check": n, "status": s, "detail": d} for n, s, d in results],
                                                  indent=2), encoding="utf-8")
@@ -409,9 +356,8 @@ def write_report(started: float):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--webhooks", action="store_true", help="post a labelled test message to configured webhooks")
     ap.add_argument("--no-camera", action="store_true")
-    ap.add_argument("--no-agent", action="store_true", help=argparse.SUPPRESS)   # old flag, no agents any more
+    ap.add_argument("--no-soma-tests", action="store_true", help="skip SOMA's own pytest suite")
     args = ap.parse_args()
     OUT.mkdir(exist_ok=True)
     started = time.time()
@@ -427,11 +373,12 @@ def main() -> int:
     else:
         camera_check()
     focus_check()
-    bridge_check()
     db_check()
-    openai_check()
-    eleven_check()
-    webhook_check(args.webhooks)
+    soma_check()
+    if args.no_soma_tests:
+        record("SOMA tests", "SKIP", "--no-soma-tests")
+    else:
+        soma_tests_check()
     ui_check(app)
     write_report(started)
     print(f"\nwrote {OUT / 'REPORT.md'}")

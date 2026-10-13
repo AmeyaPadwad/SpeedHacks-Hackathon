@@ -169,6 +169,7 @@ class Candidate:
     evidence: list[str] = field(default_factory=list)
     id: str = field(default_factory=lambda: new_id("cand_"))
     template: str = ""                           # context template id (soma.policy.context_candidates)
+    line: int | None = None                      # line in ``file_ref``, when known (not part of the key)
 
     @property
     def key(self) -> str:

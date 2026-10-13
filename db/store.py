@@ -11,19 +11,16 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (      -- webcam + UI signals: face_away, eyes_closed, pinch, ...
     ts REAL NOT NULL, kind TEXT NOT NULL, duration REAL, detail TEXT
 );
-CREATE TABLE IF NOT EXISTS messages (    -- who you message where; never the message text
-    ts REAL NOT NULL, recipient TEXT NOT NULL, platform TEXT NOT NULL, outcome TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS offers (      -- proactive/agent proposals and what you did with them
+DROP TABLE IF EXISTS messages;          -- messaging was removed; drop its old recipient/platform facts
+CREATE TABLE IF NOT EXISTS offers (      -- SOMA suggestions shown and what you did with them
     ts REAL NOT NULL, kind TEXT NOT NULL, outcome TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS blink_baseline ( -- open-eye blink-score summaries for threshold calibration
     ts REAL NOT NULL, mean REAL NOT NULL, p95 REAL NOT NULL, samples INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_kind_ts ON events(kind, ts);
-CREATE INDEX IF NOT EXISTS messages_recipient ON messages(recipient);
 """
-TABLES = ("events", "messages", "offers", "blink_baseline")
+TABLES = ("events", "offers", "blink_baseline")
 
 
 def default_path() -> Path:
@@ -55,12 +52,8 @@ class Store:
         self._insert("events", ("kind", "duration", "detail"),
                      (kind, duration, json.dumps(detail) if detail else None))
 
-    def log_message(self, recipient: str, platform: str, outcome: str):
-        """outcome: drafted | sent | cancelled | failed. The message text is never passed in."""
-        self._insert("messages", ("recipient", "platform", "outcome"), (recipient.strip().lower(), platform, outcome))
-
     def log_offer(self, kind: str, outcome: str):
-        """kind: proactive | agent; outcome: shown | accepted | declined."""
+        """kind: 'soma:<template or action>'; outcome: shown | accepted | dismissed | ignored. Never the text."""
         self._insert("offers", ("kind", "outcome"), (kind, outcome))
 
     def log_blink_baseline(self, mean: float, p95: float, samples: int):
