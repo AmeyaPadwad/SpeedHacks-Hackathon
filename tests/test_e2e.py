@@ -47,10 +47,10 @@ def test_full_session(qapp, monkeypatch, tmp_path):
         while pipeline._countdown.isActive():
             pipeline._tick()
 
-    # 1. In VS Code: pinch to talk, Slack Sarah; the post carries the summary + the diff.
+    # 1. In VS Code: click to talk, Slack Sarah; the post carries the summary + the diff.
     gate.poll()
     assert overlay.isVisible()
-    watcher.on_vision_event(PINCH)
+    pipeline.trigger()
     say_command("Slack Sarah asking her to review the dashboard fix")
     assert overlay.bubble.proposal.title.endswith("Slack to Sarah") and overlay.orb.label() == "Sending in 2s"
     countdown()
@@ -71,11 +71,11 @@ def test_full_session(qapp, monkeypatch, tmp_path):
     say_command("message Sarah saying tests pass now")
     assert "Slack (usual) to Sarah" in overlay.bubble.proposal.title
 
-    # 4. Walk away mid-countdown; come back to a nudge; pinch to cancel. Nothing sent.
+    # 4. Walk away mid-countdown; come back to a nudge; Cancel. Nothing sent.
     watcher.on_vision_event(FACE_AWAY)
     watcher.on_vision_event(FACE_BACK)
     assert overlay.bubble.title.text().startswith("Still sending?")
-    watcher.on_vision_event(PINCH)
+    overlay.bubble.cancel.click()
     countdown()
     assert len(sent) == 1 and overlay.orb.label() == "Not sent"
 
@@ -93,7 +93,7 @@ def test_full_session(qapp, monkeypatch, tmp_path):
 
     # 7. The world model learned from the session and the window shows it; no message text was stored.
     assert world.preferred_platform("sarah") == "slack"
-    assert world.presence_today()["pinches"] == 2              # the paused pinch is not logged
+    assert world.presence_today()["pinches"] == 0              # no pinches while active; the paused one is not logged
     data = win.data()
     assert data["outcomes"]["sent"] == 1 and data["outcomes"]["cancelled"] == 1
     assert data["contacts"][0]["name"] == "Sarah" and data["live"]["state"] == "idle"

@@ -79,7 +79,7 @@ class Watcher(QObject):
                 self._log("eyes_closed_ended", duration=round(now - self._closed_since, 2))
                 self._closed_since = None
         elif ev == PINCH:
-            self.overlay.pinch()                 # talk / cancel a pending send / dismiss; never sends
+            self.overlay.pinch()                 # pending draft: send now; otherwise ignored
             return
         self.overlay.set_presence(away=not self.present, eyes_closed=self.eyes_closed)
 
