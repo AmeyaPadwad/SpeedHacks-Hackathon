@@ -16,8 +16,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPlainTextEdit, QVBoxLayout, QWidget
 
-from pet.sprites import SpriteSheet
-from pet.ui import PetWidget
+from pet.ui import Orb
 from pet.vision import (EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, FACE_MODEL, HAND_MODEL, PINCH, Observation,
                         VisionPolicy, blink_scores, pinch_ratio)
 
@@ -84,8 +83,8 @@ class Window(QWidget):
         self.log = QPlainTextEdit(readOnly=True)
         self.log.setFont(QFont("Consolas", 10))
         self.log.setMaximumHeight(150)
-        self.pet = PetWidget(SpriteSheet())
-        self.pet.camera_on = True
+        self.pet = Orb()            # Pette's body: mirrors you (dozes / shuts eyes)
+        self.pet.set_camera(True)
         self.status = QLabel("Pette: idle")
         self.status.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
         right = QVBoxLayout()
@@ -127,7 +126,7 @@ class Window(QWidget):
             elif ev == PINCH:
                 self.status.setText("Pette: pinch! (would open Pette / dismiss a message)")
         state = "away" if self.away else "blink" if self.closed else "idle"
-        self.pet.set_state(state)
+        self.pet.set_mood(state)
         if PINCH not in events and not self.status.text().startswith("Pette: pinch"):
             self.status.setText({"away": "Pette: dozing (you're away)", "blink": "Pette: eyes closed (mirroring you)",
                                  "idle": "Pette: idle"}[state])

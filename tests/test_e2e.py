@@ -76,7 +76,7 @@ def test_full_session(qapp, tmp_path):
     # 5. Eyes closed: Pette mirrors (only while idle).
     overlay.dismiss()
     watcher.on_vision_event(EYES_CLOSED)
-    assert overlay.pet.state == "blink"
+    assert overlay.orb.mood == "blink"
     watcher.on_vision_event(EYES_OPEN)
 
     # 6. Pause: SOMA pauses, a pinch does nothing, no card shows.

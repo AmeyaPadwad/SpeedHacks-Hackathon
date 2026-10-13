@@ -271,7 +271,7 @@ def main() -> int:
                       ("Eyes open", EYES_OPEN), ("Pinch", PINCH))
     ])
     group("Triggers", 3, 0, [
-        ("Click Pette (look now)", overlay.pet.clicked.emit),
+        ("Click Pette (look now)", overlay.orb.clicked.emit),
         ("Pause / resume", lambda: overlay.set_paused(not overlay.paused)),
         ("Suggestions on/off", suggester.toggle),
         ("World model window", ctx.worldwin.toggle),

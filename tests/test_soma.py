@@ -155,23 +155,23 @@ def test_muted_kind_is_skipped_unless_you_asked(rig):
         rig.store.log_offer("soma:write_tests", "dismissed")
     rig.deliver(sug("s1", template="write_tests", text="Write a test for app.py"))
     assert rig.o.bubble.proposal is None and rig.client.calls[-1] == ("feedback", "s1", "ignored")
-    rig.o.pet.clicked.emit()                                        # you asked: show it anyway
+    rig.o.orb.clicked.emit()                                        # you asked: show it anyway
     rig.deliver(sug("s2", template="write_tests", text="Write a test for app.py"))
     assert rig.o.bubble.proposal is not None
 
 
 def test_click_looks_now_then_card_or_nothing(rig):
-    rig.o.pet.clicked.emit()
+    rig.o.orb.clicked.emit()
     assert ("trigger",) in rig.client.calls and rig.states[-1] == "looking"
     assert "Looking at your screen" in rig.o.bubble.body.text()
     rig.deliver(sug("s1"))
     assert rig.o.bubble.proposal is not None and rig.states[-1] == "suggesting"
     rig.o.bubble.cancel.click()
-    rig.o.pet.clicked.emit()
+    rig.o.orb.clicked.emit()
     rig.s._nothing_found()                                          # the look timed out
     assert "Nothing worth suggesting" in rig.o.bubble.body.text() and rig.states[-1] == "idle"
     rig.client.triggered = False                                    # SOMA paused on its side
-    rig.o.pet.clicked.emit()
+    rig.o.orb.clicked.emit()
     assert "paused" in rig.o.bubble.body.text() and rig.states[-1] == "failed"
 
 
@@ -182,7 +182,7 @@ def test_toggle_off_pauses_soma_and_clears_the_card(rig):
     assert ("feedback", "s1", "ignored") in rig.client.calls
     rig.deliver(sug("s2"))
     assert "Suggestions off" in rig.o.bubble.body.text()
-    rig.o.pet.clicked.emit()
+    rig.o.orb.clicked.emit()
     assert ("trigger",) not in rig.client.calls                     # off means off
     rig.s.toggle()
     assert rig.s.enabled and rig.client.calls[-1] == ("resume",)

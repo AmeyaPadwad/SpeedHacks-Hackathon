@@ -1,25 +1,22 @@
-"""Floating overlay: speech bubble, the camera orb, and the Pette sprite, stacked bottom-anchored.
+"""Floating overlay: the speech bubble and the camera orb (Pette's body), stacked bottom-anchored.
 
 Styling follows shadcn/ui (zinc palette, hairline borders, soft shadow); the bubble is frosted glass
 (translucent gradient fill, top sheen, bright inner edge) so the screen shows through. Two
 Aceternity-style touches painted in Qt: a rotating gradient "moving border" on the bubble while a send
 is counting down, and a glowing conic ring around the camera orb that changes colour with the status.
 """
-import math
 import uuid
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction, QBrush, QColor, QConicalGradient, QFont, QGuiApplication, QIcon, QImage, QLinearGradient, QPainter,
-    QPainterPath, QPen,
+    QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QMenu, QPushButton, QSystemTrayIcon,
     QVBoxLayout, QWidget,
 )
-
-from .sprites import ANIMATIONS, SpriteSheet
 
 # shadcn/ui zinc tokens
 BG, FG, MUTED, BORDER, RING = "#ffffff", "#09090b", "#71717a", "#e4e4e7", "#18181b"
@@ -37,10 +34,8 @@ STATUS = {
     "indexing": ("#8b5cf6", "Indexing"),
     "failed": ("#ef4444", "{d}"),
 }
-SPRITE_SCALE = 0.9
-FPS = 15
-FRAME_MS = 450  # how long each animation frame holds
 ORB = 116       # camera orb diameter
+MOODS = ("idle", "away", "blink", "sleeping")   # webcam presence / pause, drawn on the orb
 
 
 @dataclass
@@ -54,6 +49,23 @@ class Proposal:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
+def tray_icon(size: int = 64) -> QIcon:
+    """Pette's tray icon, drawn in code: a violet ring around a soft glass dot (no image files)."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    c = QPointF(size / 2, size / 2)
+    grad = QConicalGradient(c, 90)
+    for stop, col in ((0.0, "#8b5cf6"), (0.5, "#3b82f6"), (1.0, "#8b5cf6")):
+        grad.setColorAt(stop, QColor(col))
+    p.setPen(QPen(QBrush(grad), size * 0.12))
+    p.setBrush(QColor(250, 250, 252, 230))
+    p.drawEllipse(c, size * 0.38, size * 0.38)
+    p.end()
+    return QIcon(pm)
+
+
 def _font(px: int, weight=QFont.Normal) -> QFont:
     f = QFont(["Inter", "Segoe UI Variable Text", "Segoe UI"])
     f.setPixelSize(px)
@@ -61,53 +73,55 @@ def _font(px: int, weight=QFont.Normal) -> QFont:
     return f
 
 
-class PetWidget(QWidget):
-    """Paints the animated sprite; distinguishes a click from a drag."""
+class Orb(QWidget):
+    """Pette's body: you (mirrored webcam, local only), your hand skeleton and gesture, a glowing status
+    ring, and her mood (dozing while you're away or paused, eyes shut when yours are). Click = look now;
+    drag = move her."""
     clicked = Signal()
+    HAND_EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11),
+                  (11, 12), (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17)]
 
-    def __init__(self, sheet: SpriteSheet):
+    def __init__(self):
         super().__init__()
-        self.sheet = sheet
-        self.state = "idle"
+        self.setFixedSize(ORB + 28, ORB + 40)
+        self.image: QImage | None = None
+        self.hand: list[tuple[float, float]] = []
+        self.gesture = ""
         self.camera_on = False
-        self._tick = 0
+        self.state, self.detail = "idle", ""
+        self.level = 0.0
+        self.mood = "idle"
+        self._phase = 0.0
         self._press = None
         self._moved = False
-        w, h = int(sheet.cell_w * SPRITE_SCALE), int(sheet.cell_h * SPRITE_SCALE)
-        self.setFixedSize(w + 8, h + 14)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Click: look at my screen now")
-        self._timer = QTimer(self, interval=1000 // FPS, timeout=self._advance)
+        self._timer = QTimer(self, interval=33, timeout=self._spin)
         self._timer.start()
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click: look at my screen now · drag to move\nCamera: processed on this PC, never stored")
 
-    def set_state(self, state: str):
-        if state != self.state:
-            self.state, self._tick = state, 0
-            self.update()
-
-    def _advance(self):
-        self._tick += 1
+    def set_frame(self, frame: dict):
+        """{'image': QImage, 'hand': [(x, y)...] 0..1, 'gesture': str} from the camera thread (queued)."""
+        self.image = frame.get("image")
+        self.hand = frame.get("hand") or []
+        self.gesture = frame.get("gesture") or ""
         self.update()
 
-    def paintEvent(self, _):
-        seq = ANIMATIONS[self.state]
-        frame = seq[(self._tick * 1000 // FPS // FRAME_MS) % len(seq)]
-        p = QPainter(self)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        t = self._tick / FPS
-        sleeping = self.state in ("sleeping", "away")
-        bob = 0 if sleeping else round(math.sin(t * 2.2) * 2)
-        if sleeping:
-            p.setOpacity(0.7)
-        p.drawPixmap(QRect(4, 6 + bob, self.width() - 8, self.height() - 14), self.sheet.frames[frame])
-        if sleeping:
-            p.setOpacity(1)
-            p.setPen(QColor("#8b5cf6"))
-            p.setFont(_font(16, QFont.DemiBold))
-            off = int(t * 8) % 14
-            p.drawText(self.width() - 40, 34 - off // 2, "z")
-            p.drawText(self.width() - 26, 22 - off // 2, "Z")
+    def set_camera(self, on: bool):
+        self.camera_on = on
+        if not on:
+            self.image, self.hand, self.gesture = None, [], ""
+        self.update()
 
+    def set_status(self, state: str, detail: str = ""):
+        self.state, self.detail = state, detail
+        self.update()
+
+    def set_mood(self, mood: str):
+        if mood in MOODS and mood != self.mood:
+            self.mood = mood
+            self.update()
+
+    # --- click vs drag (moves the whole window) -----------------------------
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self._press = e.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
@@ -128,50 +142,12 @@ class PetWidget(QWidget):
             if not self._moved:
                 self.clicked.emit()
 
-
-class Orb(QWidget):
-    """Camera circle above Pette: you (mirrored webcam, local only), your hand skeleton and gesture,
-    and a glowing status ring (listening / sending in Ns / sent / not sent)."""
-    HAND_EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11),
-                  (11, 12), (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17)]
-
-    def __init__(self):
-        super().__init__()
-        self.setFixedSize(ORB + 28, ORB + 40)
-        self.image: QImage | None = None
-        self.hand: list[tuple[float, float]] = []
-        self.gesture = ""
-        self.camera_on = False
-        self.state, self.detail = "idle", ""
-        self.level = 0.0
-        self._phase = 0.0
-        self._timer = QTimer(self, interval=33, timeout=self._spin)
-        self._timer.start()
-        self.setToolTip("Camera: processed on this PC, never stored or uploaded")
-
-    def set_frame(self, frame: dict):
-        """{'image': QImage, 'hand': [(x, y)...] 0..1, 'gesture': str} from the camera thread (queued)."""
-        self.image = frame.get("image")
-        self.hand = frame.get("hand") or []
-        self.gesture = frame.get("gesture") or ""
-        self.update()
-
-    def set_camera(self, on: bool):
-        self.camera_on = on
-        if not on:
-            self.image, self.hand, self.gesture = None, [], ""
-        self.update()
-
-    def set_status(self, state: str, detail: str = ""):
-        self.state, self.detail = state, detail
-        self.update()
-
     def label(self) -> str:
         text = STATUS.get(self.state, STATUS["idle"])[1]
         return text.format(d=self.detail) if "{d}" in text else text
 
     def _spin(self):
-        speed = 6 if self.state in ("listening", "thinking", "sending", "pending") else 1.2
+        speed = 6 if self.state in ("looking", "indexing", "suggesting") else 1.2
         self._phase = (self._phase + speed) % 360
         self.level *= 0.85
         self.update()
@@ -179,6 +155,9 @@ class Orb(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        dozing = self.mood in ("away", "sleeping")
+        if dozing:
+            p.setOpacity(0.6)
         color = QColor(STATUS.get(self.state, STATUS["idle"])[0])
         cx, cy, r = self.width() / 2, ORB / 2 + 12, ORB / 2
         # glow + rotating conic ring (Aceternity "moving border")
@@ -224,7 +203,20 @@ class Orb(QWidget):
             p.setPen(QColor(MUTED))
             p.drawText(inner.adjusted(0, 0, 0, -12), Qt.AlignHCenter | Qt.AlignBottom,
                        "camera off" if not self.camera_on else "starting…")
+        if self.mood == "blink":   # your eyes are shut: a soft lid comes down over the orb
+            lid = QLinearGradient(inner.topLeft(), inner.bottomLeft())
+            lid.setColorAt(0.0, QColor(24, 24, 27, 200))
+            lid.setColorAt(0.55, QColor(24, 24, 27, 150))
+            lid.setColorAt(0.56, QColor(24, 24, 27, 0))
+            p.fillRect(inner, QBrush(lid))
         p.restore()
+        if dozing:                 # away or paused: Pette dozes
+            p.setOpacity(1)
+            p.setPen(QColor("#8b5cf6"))
+            p.setFont(_font(16, QFont.DemiBold))
+            off = int(self._phase / 6) % 14
+            p.drawText(int(cx + r - 10), int(cy - r + 22 - off // 2), "z")
+            p.drawText(int(cx + r + 2), int(cy - r + 10 - off // 2), "Z")
         # gesture chip (top) and status pill (bottom), shadcn Badge style
         if self.gesture:
             self._pill(p, self.gesture, cx, cy - r + 4, QColor(255, 255, 255, 235), QColor(FG), QColor(BORDER))
@@ -392,7 +384,7 @@ class Bubble(QWidget):
 
 
 class Overlay(QWidget):
-    """Frameless always-on-top window: bubble, camera orb and Pette, bottom edge anchored."""
+    """Frameless always-on-top window: the bubble above the orb (Pette), bottom edge anchored."""
     approved = Signal(str)
     cancelled = Signal(str)
     look_requested = Signal()         # click Pette / tray: ask SOMA to look at the screen now
@@ -401,11 +393,10 @@ class Overlay(QWidget):
     world_requested = Signal()
     camera_view_requested = Signal()  # hotkey: hide / show the camera orb (safe to emit from any thread)
 
-    def __init__(self, sheet: SpriteSheet | None = None, tray: bool = True):
+    def __init__(self, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.pet = PetWidget(sheet or SpriteSheet())
         self.orb = Orb()
         self.bubble = Bubble()
         self.bubble.hide()
@@ -414,36 +405,25 @@ class Overlay(QWidget):
         lay.setSpacing(2)
         lay.addWidget(self.bubble, 0, Qt.AlignHCenter)
         lay.addWidget(self.orb, 0, Qt.AlignHCenter)
-        lay.addWidget(self.pet, 0, Qt.AlignHCenter)
         self.paused = False
         self.context_allowed = True   # False while the foreground app isn't VS Code / a terminal (FocusGate)
         self.away = self.eyes_closed = False
-        self._base_state = "idle"
         self.bubble.approved.connect(self._decided(self.approved))
         self.bubble.cancelled.connect(self._decided(self.cancelled))
-        self.pet.clicked.connect(self._on_pet_click)
+        self.orb.clicked.connect(self._on_orb_click)
         self.camera_view_requested.connect(self.toggle_camera_view)
         self._hide_timer = QTimer(self, singleShot=True, timeout=self.dismiss)
         self._pause_action = None
         self._tray = self._build_tray() if tray else None
 
     # --- public API -------------------------------------------------------
-    def set_state(self, state: str):
-        self._base_state = state
-        if self.paused:
-            state = "sleeping"
-        elif state == "idle" and self.away:
-            state = "away"
-        elif state == "idle" and self.eyes_closed:
-            state = "blink"
-        self.pet.set_state(state)
+    def _update_mood(self):
+        self.orb.set_mood("sleeping" if self.paused else "away" if self.away
+                          else "blink" if self.eyes_closed else "idle")
 
     def set_status(self, state: str, detail: str = ""):
-        """SOMA status (pet/soma.py): drives the orb ring/pill and Pette's pose."""
+        """SOMA status (pet/soma.py): drives the orb ring and pill."""
         self.orb.set_status(state, detail)
-        pose = {"looking": "thinking", "indexing": "thinking", "suggesting": "speaking",
-                "done": "speaking"}.get(state, "idle")
-        self.set_state(pose)
 
     def set_level(self, level: float):
         self.orb.level = max(self.orb.level, level)
@@ -464,12 +444,11 @@ class Overlay(QWidget):
             self.show()
 
     def set_presence(self, away: bool, eyes_closed: bool):
-        """Webcam reactions; only change Pette's look while she's otherwise idle."""
+        """Webcam reactions: Pette dozes while you're away and shuts her eyes with yours."""
         self.away, self.eyes_closed = away, eyes_closed
-        self.set_state(self._base_state)
+        self._update_mood()
 
     def set_camera_indicator(self, on: bool):
-        self.pet.camera_on = on
         self.orb.set_camera(on)
 
     @property
@@ -550,7 +529,7 @@ class Overlay(QWidget):
         self.paused = paused
         if paused:
             self.dismiss()  # also drops an open card so it can't be accepted later
-        self.set_state("idle")
+        self._update_mood()
         if self._pause_action and self._pause_action.isChecked() != paused:
             self._pause_action.setChecked(paused)
         self.pause_toggled.emit(paused)
@@ -571,8 +550,8 @@ class Overlay(QWidget):
             signal.emit(pid)
         return handler
 
-    def _on_pet_click(self):
-        """Clicking Pette asks SOMA to look at the screen now."""
+    def _on_orb_click(self):
+        """Clicking Pette (the orb) asks SOMA to look at the screen now."""
         if self.paused:
             return
         self.look_requested.emit()
@@ -597,8 +576,7 @@ class Overlay(QWidget):
         return g
 
     def _build_tray(self) -> QSystemTrayIcon:
-        icon = QIcon(self.pet.sheet.frames[0].scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        tray = QSystemTrayIcon(icon, self)
+        tray = QSystemTrayIcon(tray_icon(), self)
         tray.setToolTip("Pette")
         menu = QMenu()
         menu.addAction(QAction("Look at my screen now", menu, triggered=self.look_requested.emit))

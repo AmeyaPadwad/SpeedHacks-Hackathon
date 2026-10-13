@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QThread, Signal
 
-from .sprites import asset_path
+from .paths import asset_path
 
 FACE_MODEL = asset_path("face_landmarker.task", folder="models")
 HAND_MODEL = asset_path("hand_landmarker.task", folder="models")

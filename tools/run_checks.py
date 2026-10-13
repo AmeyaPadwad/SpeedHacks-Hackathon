@@ -264,7 +264,7 @@ def ui_check(app):
         ("camera: you + hand", lambda: camera("")),
         ("away", lambda: w.on_vision_event(FACE_AWAY)),
         ("eyes closed", lambda: (w.on_vision_event(FACE_BACK), w.on_vision_event(EYES_CLOSED))),
-        ("click = look now", lambda: (w.on_vision_event(EYES_OPEN), o.pet.clicked.emit())),
+        ("click = look now", lambda: (w.on_vision_event(EYES_OPEN), o.orb.clicked.emit())),
         ("card: open file", lambda: card(action="OPEN_RELEVANT_FILE", text="Open calc.py at line 40",
                                          file="C:/repo/calc.py", line=40)),
         ("pinch = Do it", lambda: (camera("pinch"), w.on_vision_event(PINCH))),

@@ -13,7 +13,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from .sprites import asset_path
+from .paths import asset_path
 
 PAGE = asset_path("index.html", folder="pet/web")
 WIDTH, HEIGHT = 380, 600
