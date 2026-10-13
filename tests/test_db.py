@@ -50,7 +50,11 @@ def test_presence_and_summary(mem):
     store.log_event("eyes_closed")
     store.log_event("pinch")
     p = world.presence_today()
-    assert p == {"away_episodes": 2, "median_away_s": 21.0, "eyes_closed": 1, "pinches": 1}
+    assert p == {"away_episodes": 2, "median_away_s": 21.0, "eyes_closed": 1, "pinches": 1,
+                 "tab_switches": 0, "scrolls": 0}
+    for kind in ("point_left", "point_right", "point_right", "drag_start"):
+        store.log_event(kind)
+    assert world.presence_today()["tab_switches"] == 3 and world.presence_today()["scrolls"] == 1
     store.log_offer("soma:review_changes", "accepted")
     s = world.summary()
     assert "1 done" in s and "away 2x" in s and "(default)" in s

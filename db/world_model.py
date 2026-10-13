@@ -88,6 +88,8 @@ class WorldModel:
             "median_away_s": round(statistics.median(away), 1) if away else None,
             "eyes_closed": count("eyes_closed"),
             "pinches": count("pinch"),
+            "tab_switches": count("point_left") + count("point_right"),
+            "scrolls": count("drag_start"),
         }
 
     def summary(self) -> str:
@@ -101,7 +103,8 @@ class WorldModel:
         p = self.presence_today()
         lines.append(f"Last 24h: away {p['away_episodes']}x"
                      + (f" (median {p['median_away_s']}s)" if p["median_away_s"] else "")
-                     + f", eyes closed {p['eyes_closed']}x, pinches {p['pinches']}")
+                     + f", eyes closed {p['eyes_closed']}x, pinches {p['pinches']}"
+                     + f", tab switches {p['tab_switches']}, scrolls {p['scrolls']}")
         return "\n".join(lines)
 
     # --- UI ---------------------------------------------------------------

@@ -20,7 +20,8 @@ type Snapshot = {
   soma: { shown: number; accepted: number; dismissed: number; ignored: number }; accept_rate: number | null;
   kinds: Kind[]; muted: string[]; folders: Folder[];
   blink_threshold: number; blink_calibrated: boolean; baseline_samples: number;
-  presence: { away_episodes: number; median_away_s: number | null; eyes_closed: number; pinches: number };
+  presence: { away_episodes: number; median_away_s: number | null; eyes_closed: number; pinches: number;
+    tab_switches?: number; scrolls?: number };
   rules: Rule[]; recent: { ts: number; kind: string; outcome: string }[];
   events: { ts: number; kind: string }[]; updated: number; live: Live; error?: string;
 };
@@ -38,7 +39,7 @@ const SAMPLE: Snapshot = {
   muted: [],
   folders: [{ name: "notes", path: "C:\\Users\\you\\notes", memories: 42 }, { name: "my-repo", path: "C:\\code\\my-repo", memories: 118 }],
   blink_threshold: 0.6, blink_calibrated: false, baseline_samples: 120,
-  presence: { away_episodes: 2, median_away_s: 18, eyes_closed: 5, pinches: 3 },
+  presence: { away_episodes: 2, median_away_s: 18, eyes_closed: 5, pinches: 3, tab_switches: 12, scrolls: 7 },
   rules: [
     { when: "SOMA sees a next step on your screen", then: "Pette shows it as a card; nothing happens until you press “Do it” or pinch", why: "9 shown: 4 done, 3 not now, 2 ignored" },
     { when: "Your eyes look closed on camera", then: "blink score above 0.6", why: "default until the camera has seen enough open-eye frames" },
@@ -193,12 +194,14 @@ export default function App() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Eye className="h-4 w-4" /> Last 24 hours</CardTitle>
-              <CardDescription>Camera signals (event names only, no frames stored)</CardDescription>
+              <CardDescription>Camera signals and gestures (event names only, no frames stored)</CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-2 text-[11px]">
               <Stat label="Away" value={`${d.presence?.away_episodes ?? 0}×${d.presence?.median_away_s ? ` · ~${d.presence.median_away_s}s` : ""}`} />
               <Stat label="Eyes closed" value={`${d.presence?.eyes_closed ?? 0}×`} />
               <Stat label="Pinches" value={`${d.presence?.pinches ?? 0}`} />
+              <Stat label="Tab switches" value={`${d.presence?.tab_switches ?? 0}`} />
+              <Stat label="Scrolls" value={`${d.presence?.scrolls ?? 0}`} />
               <Stat label="Blink threshold" value={`${d.blink_threshold}${d.blink_calibrated ? " ✓" : ""}`} />
             </CardContent>
           </Card>
