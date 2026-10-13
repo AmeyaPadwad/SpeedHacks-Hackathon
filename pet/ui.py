@@ -51,6 +51,7 @@ class Proposal:
     body: str
     action_label: str = "Send"
     countdown: bool = False
+    cancel_label: str = "Cancel"
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
@@ -337,7 +338,7 @@ class Bubble(QWidget):
         self._set_title(p.title)
         self.body.setText(p.body)
         self.primary.setText(p.action_label)
-        self.cancel.setText("Cancel")
+        self.cancel.setText(p.cancel_label)
         self.primary.setEnabled(True)
         self.cancel.setEnabled(True)
         self.buttons.show()
