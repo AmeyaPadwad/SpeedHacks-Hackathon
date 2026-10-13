@@ -445,6 +445,7 @@ class Overlay(QWidget):
     input_cancelled = Signal()
     pinch_on_proposal = Signal(str)   # proposal id; the pipeline cancels a pending send
     world_requested = Signal()
+    camera_view_requested = Signal()  # hotkey: hide / show the camera orb (safe to emit from any thread)
 
     def __init__(self, sheet: SpriteSheet | None = None, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -470,6 +471,7 @@ class Overlay(QWidget):
         self.bubble.submitted.connect(self.text_submitted)
         self.bubble.input_cancelled.connect(self._on_input_cancelled)
         self.pet.clicked.connect(self._on_pet_click)
+        self.camera_view_requested.connect(self.toggle_camera_view)
         self._hide_timer = QTimer(self, singleShot=True, timeout=self.dismiss)
         self._pause_action = None
         self._tray = self._build_tray() if tray else None
@@ -519,6 +521,19 @@ class Overlay(QWidget):
     def set_camera_indicator(self, on: bool):
         self.pet.camera_on = on
         self.orb.set_camera(on)
+
+    @property
+    def camera_visible(self) -> bool:
+        return not self.orb.isHidden()
+
+    def set_camera_visible(self, visible: bool):
+        """Hide or show the camera orb (preview, hand, status ring). The camera itself keeps its on/off
+        state, so pinch still works while the view is hidden; Pette stays where she is."""
+        if visible != self.camera_visible:
+            self._reanchor(lambda: self.orb.setVisible(visible))
+
+    def toggle_camera_view(self):
+        self.set_camera_visible(not self.camera_visible)
 
     def pinch(self):
         """The only gesture: pinch sends the pending message now (same as Send now). Otherwise ignored."""

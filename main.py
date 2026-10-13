@@ -105,7 +105,15 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
 
     overlay.pause_toggled.connect(on_pause)
 
+    overlay.add_menu_action(f"Hide / show camera view ({voice.CAMERA_HOTKEY.title()})",
+                            overlay.toggle_camera_view)
+
+    # Global hotkeys fire on the keyboard library's thread: they only emit signals (queued to the main thread).
     hotkey_ok = voice.register_hotkey(pipeline.hotkey_pressed.emit)
+    hotkeys = {voice.CAMERA_HOTKEY: overlay.camera_view_requested.emit,
+               voice.WORLD_HOTKEY: overlay.world_requested.emit}
+    for combo, emit in hotkeys.items():
+        voice.register_hotkey(emit, combo)
     app.aboutToQuit.connect(voice.unregister_hotkeys)
     app.aboutToQuit.connect(watcher.stop)
 
@@ -119,7 +127,8 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
             watcher.set_camera(True)
     if not args.no_world:
         worldwin.show_near()
-    how = f"Click me (or {voice.HOTKEY.title()}) and tell me what to send."
+    how = (f"Click me (or {voice.HOTKEY.title()}) and tell me what to send. "
+           f"{voice.CAMERA_HOTKEY.title()} hides the camera, {voice.WORLD_HOTKEY.title()} the world panel.")
     if args.demo:
         overlay.say(f"Demo mode: type commands, keyword drafter. {how}", title=OfflineBrain.label, seconds=8)
     elif not llm.configured():

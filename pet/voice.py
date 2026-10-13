@@ -5,6 +5,8 @@ import os
 from . import llm
 
 HOTKEY = os.environ.get("FLOWSTATE_HOTKEY") or "ctrl+shift+space"
+CAMERA_HOTKEY = os.environ.get("PETTE_CAMERA_HOTKEY") or "ctrl+alt+c"   # hide / show the camera orb
+WORLD_HOTKEY = os.environ.get("PETTE_WORLD_HOTKEY") or "ctrl+alt+w"     # hide / show the world-model panel
 LISTEN_TIMEOUT_S = 6      # wait this long for speech to start
 PHRASE_LIMIT_S = 20       # hard cap on one command
 TRANSCRIBE_TIMEOUT_S = 20
