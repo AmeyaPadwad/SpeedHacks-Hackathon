@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, Camera, CameraOff, Eye, EyeOff, Hand, Mail, MessageSquare, Send, Timer, UserRound, X } from "lucide-react";
+import { Activity, Camera, CameraOff, Eye, EyeOff, FolderOpen, Hand, Lightbulb, X } from "lucide-react";
 import { BackgroundGradient } from "@/components/aceternity/background-gradient";
 import { MovingBorder } from "@/components/aceternity/moving-border";
 import { Spotlight } from "@/components/aceternity/spotlight";
@@ -12,14 +12,16 @@ import { Separator } from "@/components/ui/separator";
 import { ago, cn } from "@/lib/utils";
 
 type Rule = { when: string; then: string; why: string };
-type Contact = { name: string; platform: string; sent: number; drafted: number; cancelled: number };
+type Kind = { kind: string; label: string; shown: number; accepted: number; dismissed: number; ignored: number };
+type Folder = { name: string; path: string; memories: number };
 type Live = { state: string; detail: string; label: string; camera: boolean; gesture: string; present: boolean;
-  eyes_closed: boolean; paused: boolean; now: number };
+  eyes_closed: boolean; paused: boolean; suggestions: boolean; now: number };
 type Snapshot = {
-  contacts: Contact[]; outcomes: Record<string, number>; send_rate: number | null; send_delay_s: number;
+  soma: { shown: number; accepted: number; dismissed: number; ignored: number }; accept_rate: number | null;
+  kinds: Kind[]; muted: string[]; folders: Folder[];
   blink_threshold: number; blink_calibrated: boolean; baseline_samples: number;
   presence: { away_episodes: number; median_away_s: number | null; eyes_closed: number; pinches: number };
-  rules: Rule[]; recent: { ts: number; recipient: string; platform: string; outcome: string }[];
+  rules: Rule[]; recent: { ts: number; kind: string; outcome: string }[];
   events: { ts: number; kind: string }[]; updated: number; live: Live; error?: string;
 };
 
@@ -27,33 +29,38 @@ declare global { interface Window { __pette?: (d: Snapshot) => void } }
 
 const now = Date.now() / 1000;
 const SAMPLE: Snapshot = {
-  contacts: [{ name: "Sarah", platform: "slack", sent: 3, drafted: 4, cancelled: 1 }, { name: "Alex", platform: "discord", sent: 1, drafted: 2, cancelled: 0 }],
-  outcomes: { drafted: 6, sent: 4, cancelled: 1, failed: 0 }, send_rate: 0.8, send_delay_s: 4,
+  soma: { shown: 9, accepted: 4, dismissed: 3, ignored: 2 }, accept_rate: 4 / 7,
+  kinds: [
+    { kind: "soma:open_relevant_file", label: "Open file", shown: 4, accepted: 3, dismissed: 1, ignored: 0 },
+    { kind: "soma:review_changes", label: "Review changes", shown: 3, accepted: 1, dismissed: 1, ignored: 1 },
+    { kind: "soma:take_notes", label: "Save notes", shown: 2, accepted: 0, dismissed: 1, ignored: 1 },
+  ],
+  muted: [],
+  folders: [{ name: "notes", path: "C:\\Users\\you\\notes", memories: 42 }, { name: "my-repo", path: "C:\\code\\my-repo", memories: 118 }],
   blink_threshold: 0.6, blink_calibrated: false, baseline_samples: 120,
   presence: { away_episodes: 2, median_away_s: 18, eyes_closed: 5, pinches: 3 },
   rules: [
-    { when: "You say “message Sarah” without a platform", then: "Pette uses Slack", why: "3 sent, 4 drafted to Sarah there" },
-    { when: "A draft is ready", then: "Pette waits 4s before sending (Cancel shows)", why: "default until 5 messages are decided" },
+    { when: "SOMA sees a next step on your screen", then: "Pette shows it as a card; nothing happens until you press “Do it” or pinch", why: "9 shown: 4 done, 3 not now, 2 ignored" },
     { when: "Your eyes look closed on camera", then: "blink score above 0.6", why: "default until the camera has seen enough open-eye frames" },
   ],
-  recent: [{ ts: now - 40, recipient: "Sarah", platform: "slack", outcome: "sent" }, { ts: now - 300, recipient: "Alex", platform: "discord", outcome: "cancelled" }],
+  recent: [{ ts: now - 40, kind: "Open file", outcome: "accepted" }, { ts: now - 300, kind: "Save notes", outcome: "dismissed" }],
   events: [{ ts: now - 12, kind: "pinch" }, { ts: now - 90, kind: "face_back" }],
   updated: now,
-  live: { state: "listening", detail: "", label: "Listening", camera: true, gesture: "open hand", present: true, eyes_closed: false, paused: false, now },
+  live: { state: "suggesting", detail: "", label: "Suggestion", camera: true, gesture: "", present: true, eyes_closed: false, paused: false, suggestions: true, now },
 };
 
-const STATE_STYLE: Record<string, { badge: BadgeProps["variant"]; color: string; text: string }> = {
-  idle: { badge: "secondary", color: "#a1a1aa", text: "Idle · click Pette to talk" },
-  listening: { badge: "violet", color: "#8b5cf6", text: "Listening" },
-  thinking: { badge: "info", color: "#3b82f6", text: "Drafting with Groq" },
-  pending: { badge: "warning", color: "#f59e0b", text: "Sending soon" },
-  sending: { badge: "info", color: "#3b82f6", text: "Sending" },
-  sent: { badge: "success", color: "#22c55e", text: "Sent ✓" },
-  cancelled: { badge: "secondary", color: "#71717a", text: "Not sent (cancelled)" },
-  failed: { badge: "destructive", color: "#ef4444", text: "Not sent" },
+const STATE_STYLE: Record<string, { color: string; text: string }> = {
+  idle: { color: "#a1a1aa", text: "Watching · click Pette to look now" },
+  looking: { color: "#3b82f6", text: "Looking at your screen" },
+  suggesting: { color: "#f59e0b", text: "Suggestion on screen" },
+  done: { color: "#22c55e", text: "Done ✓" },
+  dismissed: { color: "#71717a", text: "Not now" },
+  indexing: { color: "#8b5cf6", text: "Indexing a folder" },
+  failed: { color: "#ef4444", text: "SOMA offline" },
 };
-const OUTCOME: Record<string, BadgeProps["variant"]> = { sent: "success", cancelled: "secondary", failed: "destructive", drafted: "outline" };
-const PlatformIcon = ({ p }: { p: string }) => (p === "email" ? <Mail className="h-3 w-3" /> : <MessageSquare className="h-3 w-3" />);
+const OUTCOME: Record<string, { v: BadgeProps["variant"]; text: string }> = {
+  accepted: { v: "success", text: "done" }, dismissed: { v: "secondary", text: "not now" }, ignored: { v: "outline", text: "ignored" },
+};
 
 export default function App() {
   const [d, setD] = useState<Snapshot>(SAMPLE);
@@ -64,10 +71,10 @@ export default function App() {
   }, []);
 
   const st = STATE_STYLE[d.live?.state] ?? STATE_STYLE.idle;
-  const busy = ["listening", "thinking", "pending", "sending"].includes(d.live?.state);
-  const o = d.outcomes ?? {};
-  const decided = (o.sent ?? 0) + (o.cancelled ?? 0);
+  const busy = ["looking", "suggesting", "indexing"].includes(d.live?.state);
+  const s = d.soma ?? { shown: 0, accepted: 0, dismissed: 0, ignored: 0 };
   const t = d.live?.now ?? d.updated;
+  const label = d.live?.state === "failed" ? st.text : d.live?.state === "idle" || !d.live?.label ? st.text : d.live.label;
 
   return (
     <div className="h-full p-2">
@@ -77,13 +84,13 @@ export default function App() {
           <Spotlight className="-left-10 -top-24" fill="#a78bfa" />
           <div className="relative z-10 flex items-center justify-between">
             <div>
-              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-400">Pette</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-400">Pette · SOMA</div>
               <div className="text-base font-semibold">World model</div>
             </div>
             <Button variant="ghost" size="icon" className="text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
               onClick={() => (document.title = `close:${Date.now()}`)} aria-label="Close"><X className="h-4 w-4" /></Button>
           </div>
-          <p className="relative z-10 mt-1 text-xs text-zinc-400">What Pette has learned from your local history, and how it changes what she does.</p>
+          <p className="relative z-10 mt-1 text-xs text-zinc-400">What SOMA suggested, what you did with it, and the folders it learns from.</p>
           {!live && <Badge variant="warning" className="relative z-10 mt-2">preview data</Badge>}
         </div>
 
@@ -98,13 +105,14 @@ export default function App() {
                     <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: st.color }} />
                   </span>
                   <AnimatePresence mode="wait">
-                    <motion.span key={d.live?.label || st.text} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}>
-                      {d.live?.state === "pending" ? `Sending in ${d.live.detail}s` : d.live?.label || st.text}
-                    </motion.span>
+                    <motion.span key={label} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}>{label}</motion.span>
                   </AnimatePresence>
                 </div>
               </MovingBorder>
-              {d.live?.paused && <Badge variant="secondary">paused</Badge>}
+              <div className="flex gap-1">
+                {d.live?.paused && <Badge variant="secondary">paused</Badge>}
+                {d.live && !d.live.suggestions && <Badge variant="secondary">suggestions off</Badge>}
+              </div>
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
               <Stat icon={d.live?.camera ? <Camera className="h-3.5 w-3.5" /> : <CameraOff className="h-3.5 w-3.5" />} label="Camera" value={d.live?.camera ? "on" : "off"} />
@@ -113,6 +121,55 @@ export default function App() {
                 value={!d.live?.present ? "away" : d.live?.eyes_closed ? "eyes closed" : "here"} />
             </div>
           </BackgroundGradient>
+
+          {/* suggestions */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Lightbulb className="h-4 w-4" /> Suggestions</CardTitle>
+              <CardDescription>{d.accept_rate != null ? `You act on ${Math.round(d.accept_rate * 100)}% of the ones you answer` : "No answered suggestions yet"}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Progress value={(d.accept_rate ?? 0) * 100} indicator="bg-emerald-500" />
+              <div className="flex flex-wrap gap-1.5">
+                <Badge variant="outline">{s.shown} shown</Badge>
+                <Badge variant="success">{s.accepted} done</Badge>
+                <Badge variant="secondary">{s.dismissed} not now</Badge>
+                <Badge variant="outline">{s.ignored} ignored</Badge>
+              </div>
+              {d.kinds?.map((k) => {
+                const total = Math.max(1, k.shown);
+                const muted = d.muted?.includes(k.label);
+                return (
+                  <div key={k.kind} className="space-y-1">
+                    <div className="flex items-center justify-between text-[13px]">
+                      <span className={cn("font-medium", muted && "text-muted-foreground line-through")}>{k.label}</span>
+                      <span className="text-[11px] text-muted-foreground">{muted ? "muted" : `${k.accepted}/${k.shown}`}</span>
+                    </div>
+                    <div className="flex h-1.5 overflow-hidden rounded-full bg-secondary">
+                      <div className="bg-emerald-500" style={{ width: `${(k.accepted / total) * 100}%` }} />
+                      <div className="bg-zinc-400" style={{ width: `${(k.dismissed / total) * 100}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+
+          {/* folders */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><FolderOpen className="h-4 w-4" /> Your files</CardTitle>
+              <CardDescription>Folders SOMA indexed for suggestions</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {d.folders?.length ? d.folders.map((f) => (
+                <div key={f.path} className="flex items-center justify-between text-xs" title={f.path}>
+                  <span className="truncate font-medium">{f.name}</span>
+                  <Badge variant="info">{f.memories} files</Badge>
+                </div>
+              )) : <p className="text-xs text-muted-foreground">None yet. Tray → “Add a folder for SOMA…” so suggestions can point at your own files.</p>}
+            </CardContent>
+          </Card>
 
           {/* behaviour rules */}
           <Card>
@@ -129,50 +186,6 @@ export default function App() {
                   <div className="mt-0.5 text-[11px] italic text-muted-foreground">because {r.why}</div>
                 </motion.div>
               ))}
-            </CardContent>
-          </Card>
-
-          {/* sending */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Send className="h-4 w-4" /> Sending</CardTitle>
-              <CardDescription>{decided ? `${Math.round((d.send_rate ?? 0) * 100)}% of decided messages sent` : "No decided messages yet"}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Progress value={(d.send_rate ?? 0) * 100} indicator="bg-emerald-500" />
-              <div className="flex flex-wrap gap-1.5">
-                <Badge variant="success">{o.sent ?? 0} sent</Badge>
-                <Badge variant="secondary">{o.cancelled ?? 0} cancelled</Badge>
-                <Badge variant="destructive">{o.failed ?? 0} failed</Badge>
-                <Badge variant="outline">{o.drafted ?? 0} drafted</Badge>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Timer className="h-3.5 w-3.5" /> Countdown before dispatch: <span className="font-semibold text-foreground">{d.send_delay_s}s</span></div>
-            </CardContent>
-          </Card>
-
-          {/* contacts */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><UserRound className="h-4 w-4" /> People</CardTitle>
-              <CardDescription>Usual platform per person</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {d.contacts?.length ? d.contacts.map((c) => {
-                const total = Math.max(1, c.sent + c.drafted + c.cancelled);
-                return (
-                  <div key={c.name} className="space-y-1">
-                    <div className="flex items-center justify-between text-[13px]">
-                      <span className="font-medium">{c.name}</span>
-                      <Badge variant="outline" className="capitalize"><PlatformIcon p={c.platform} />{c.platform || "?"}</Badge>
-                    </div>
-                    <div className="flex h-1.5 overflow-hidden rounded-full bg-secondary">
-                      <div className="bg-emerald-500" style={{ width: `${(c.sent / total) * 100}%` }} />
-                      <div className="bg-zinc-400" style={{ width: `${(c.drafted / total) * 100}%` }} />
-                      <div className="bg-rose-400" style={{ width: `${(c.cancelled / total) * 100}%` }} />
-                    </div>
-                  </div>
-                );
-              }) : <p className="text-xs text-muted-foreground">Send a message and Pette starts learning who you talk to where.</p>}
             </CardContent>
           </Card>
 
@@ -194,14 +207,13 @@ export default function App() {
           <Card>
             <CardHeader>
               <CardTitle>Recent</CardTitle>
-              <CardDescription>Who and where, never what</CardDescription>
+              <CardDescription>Which kind and what you did, never the text</CardDescription>
             </CardHeader>
             <CardContent className="space-y-1.5">
               {d.recent?.length ? d.recent.map((m, i) => (
                 <div key={i} className="flex items-center justify-between text-xs">
-                  <span className="flex items-center gap-1.5"><PlatformIcon p={m.platform} /><span className="font-medium">{m.recipient}</span>
-                    <span className="capitalize text-muted-foreground">· {m.platform}</span></span>
-                  <span className="flex items-center gap-1.5"><Badge variant={OUTCOME[m.outcome] ?? "outline"}>{m.outcome}</Badge>
+                  <span className="font-medium">{m.kind}</span>
+                  <span className="flex items-center gap-1.5"><Badge variant={OUTCOME[m.outcome]?.v ?? "outline"}>{OUTCOME[m.outcome]?.text ?? m.outcome}</Badge>
                     <span className="w-14 text-right text-muted-foreground">{ago(m.ts, t)}</span></span>
                 </div>
               )) : <p className="text-xs text-muted-foreground">Nothing yet.</p>}
