@@ -90,6 +90,7 @@ def test_card_then_copy(rig):
     b.primary.click()
     assert rig.copied == ['Review your changes to "app.py" before you commit']
     assert ("feedback", "s1", "accepted") in rig.client.calls and rig.o.orb.label() == "Done ✓"
+    assert rig.o.bubble.progress is None                            # "Done" message has no time-left bar
     assert rig.store.query("SELECT kind, outcome FROM offers ORDER BY rowid") == [
         ("soma:review_changes", "shown"), ("soma:review_changes", "accepted")]
 

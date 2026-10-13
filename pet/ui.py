@@ -295,6 +295,7 @@ class Bubble(QWidget):
     # --- content ----------------------------------------------------------
     def show_text(self, text: str, title: str = ""):
         self.proposal = None
+        self.progress = None          # a plain message never carries a card's time-left bar
         self._set_title(title)
         self.body.setText(text)
         self.buttons.hide()
