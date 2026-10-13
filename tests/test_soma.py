@@ -249,3 +249,12 @@ def test_kind_and_opener():
     assert soma.opener(sug(file="a.py", line=3)) == ("a.py", 3)
     assert soma.opener(sug(file="a.py", line="3")) == ("a.py", None)  # only real ints become a line
     assert soma.opener(sug(memory_source="n.md")) == ("n.md", None)
+
+
+def test_cards_wait_while_the_bubble_is_off(rig):
+    rig.o.set_bubble_enabled(False)
+    rig.deliver(sug("s1"))
+    assert rig.o.bubble.proposal is None and rig.store.query("SELECT COUNT(*) FROM offers")[0][0] == 0
+    rig.o.set_bubble_enabled(True)
+    rig.deliver(sug("s2"))
+    assert rig.o.bubble.proposal is not None and rig.o.bar.isVisible() is not None

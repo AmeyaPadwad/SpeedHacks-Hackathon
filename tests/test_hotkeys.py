@@ -16,14 +16,13 @@ def overlay(qapp):
     o.close()
 
 
-def test_camera_view_toggles_and_pette_stays_put(qapp, overlay):
-    pet_bottom = overlay.geometry().bottom()
+def test_camera_picture_toggles_and_pette_stays(qapp, overlay):
+    geo = overlay.geometry()
     overlay.camera_view_requested.emit()
-    assert not overlay.camera_visible and overlay.orb.isHidden()
-    assert overlay.geometry().bottom() == pet_bottom
+    assert not overlay.camera_visible and overlay.orb.isVisible()         # only the picture is hidden
+    assert overlay.geometry() == geo and not overlay.orb.grab().isNull()
     overlay.camera_view_requested.emit()
-    assert overlay.camera_visible
-    assert overlay.geometry().bottom() == pet_bottom
+    assert overlay.camera_visible and overlay.geometry() == geo
 
 
 def test_hidden_camera_view_keeps_camera_state_and_status(qapp, overlay):
@@ -53,7 +52,7 @@ def test_build_registers_all_hotkeys(qapp, monkeypatch, tmp_path):
     app = main.build(main.parse_args(["--no-camera", "--no-world"]))
     try:
         assert set(registered) == {hotkeys.LOOK_HOTKEY, hotkeys.CAMERA_HOTKEY, hotkeys.WORLD_HOTKEY,
-                                   hotkeys.SOMA_HOTKEY}
+                                   hotkeys.SOMA_HOTKEY, hotkeys.BUBBLE_HOTKEY}
         registered[hotkeys.CAMERA_HOTKEY]()
         qapp.processEvents()
         assert not app.overlay.camera_visible
@@ -63,6 +62,9 @@ def test_build_registers_all_hotkeys(qapp, monkeypatch, tmp_path):
         registered[hotkeys.WORLD_HOTKEY]()
         qapp.processEvents()
         assert not app.worldwin.isVisible()
+        registered[hotkeys.BUBBLE_HOTKEY]()
+        qapp.processEvents()
+        assert app.overlay.bubble_enabled is False
         registered[hotkeys.SOMA_HOTKEY]()
         qapp.processEvents()
         assert app.suggester.enabled is False

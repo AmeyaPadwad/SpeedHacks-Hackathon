@@ -252,7 +252,8 @@ class Suggester(QObject):
     # --- main thread: look now ---------------------------------------------
     def _free(self) -> bool:
         o = self.overlay
-        return self.enabled and not o.paused and o.context_allowed and o.bubble.proposal is None
+        return (self.enabled and not o.paused and o.context_allowed and getattr(o, "bubble_enabled", True)
+                and o.bubble.proposal is None)
 
     def look_now(self):
         """Click / hotkey: SOMA looks at the screen now; the next suggestion shows, or "nothing" after a while."""

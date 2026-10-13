@@ -61,3 +61,50 @@ def test_orb_paints_every_mood_and_status(qapp):
 def test_tray_icon_is_drawn_without_image_files(qapp):
     icon = tray_icon()
     assert not icon.isNull() and not icon.pixmap(32, 32).isNull()
+
+
+def test_speech_bubble_docks_bottom_centre_of_the_screen(qapp):
+    from PySide6.QtGui import QGuiApplication
+    o = Overlay(tray=False)
+    o.place_default()
+    o.show()
+    o.say("Indexed 12 file(s) from notes.", title="SOMA memory", seconds=None)
+    bar, a = o.bar, QGuiApplication.primaryScreen().availableGeometry()
+    assert bar.isVisible() and o.bubble.isVisible() and o.bubble.tail
+    if not bar.geometry().translated(a.center().x() - bar.geometry().center().x(), 0).intersects(o.geometry()):
+        assert abs(bar.geometry().center().x() - a.center().x()) <= 1         # centred when there's room
+    assert a.bottom() - bar.geometry().bottom() < 30                         # just above the taskbar
+    assert not bar.geometry().intersects(o.geometry())                      # not stacked on the orb
+    o.dismiss()
+    assert not bar.isVisible()
+    o.close()
+
+
+def test_bubble_toggle_hides_it_and_suppresses_messages(qapp):
+    from pet.ui import Proposal
+    o = Overlay(tray=False)
+    o.show()
+    seen = []
+    o.bubble_toggled.connect(seen.append)
+    o.propose(Proposal("SOMA suggests · Next step", "Write a test"))
+    o.bubble_toggle_requested.emit()
+    assert o.bubble_enabled is False and seen == [False]
+    assert o.bubble.proposal is None and not o.bar.isVisible()               # open card dropped
+    o.say("hello", seconds=None)
+    o.propose(Proposal("x", "y"))
+    assert not o.bar.isVisible() and o.bubble.proposal is None
+    o.set_bubble_enabled(True)
+    o.say("back", seconds=None)
+    assert o.bar.isVisible() and seen == [False, True]
+    o.close()
+
+
+def test_bubble_hidden_with_pette_outside_allowed_apps(qapp):
+    o = Overlay(tray=False)
+    o.show()
+    o.say("hi", seconds=None)
+    o.set_context_allowed(False)
+    assert not o.bar.isVisible()
+    o.set_context_allowed(True)
+    assert o.bar.isVisible()
+    o.close()

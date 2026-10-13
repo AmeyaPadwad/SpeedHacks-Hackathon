@@ -2,9 +2,10 @@
 import os
 
 LOOK_HOTKEY = os.environ.get("FLOWSTATE_HOTKEY") or "ctrl+shift+space"   # same as clicking Pette: look now
-CAMERA_HOTKEY = os.environ.get("PETTE_CAMERA_HOTKEY") or "ctrl+alt+c"     # hide / show the camera orb
+CAMERA_HOTKEY = os.environ.get("PETTE_CAMERA_HOTKEY") or "ctrl+alt+c"     # hide / show the camera picture
 WORLD_HOTKEY = os.environ.get("PETTE_WORLD_HOTKEY") or "ctrl+alt+w"       # hide / show the world-model panel
 SOMA_HOTKEY = os.environ.get("PETTE_SOMA_HOTKEY") or "ctrl+alt+s"         # SOMA suggestions on / off
+BUBBLE_HOTKEY = os.environ.get("PETTE_BUBBLE_HOTKEY") or "ctrl+alt+b"     # speech bubble on / off
 
 
 def register(callback, combo: str) -> bool:

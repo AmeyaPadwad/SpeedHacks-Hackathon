@@ -49,7 +49,7 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     app.aboutToQuit.connect(memory.close)
     worldwin = WorldWindow(overlay, world, suggester, watcher)
     overlay.world_requested.connect(worldwin.toggle)
-    for window in (overlay, worldwin):   # SOMA must never OCR Pette's own bubble or panel
+    for window in (overlay, overlay.bar, worldwin):   # SOMA must never OCR Pette's own bubble or panel
         soma.exclude_from_capture(window)
 
     # --- tray: SOMA ---
@@ -86,7 +86,7 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     gate.enabled = args.focus_only
     camera_action = overlay.add_menu_action("Camera: you, hands, presence (local)", watcher.set_camera,
                                             checkable=True)
-    overlay.add_menu_action(f"Hide / show camera view ({hotkeys.CAMERA_HOTKEY.title()})",
+    overlay.add_menu_action(f"Hide / show camera picture ({hotkeys.CAMERA_HOTKEY.title()})",
                             overlay.toggle_camera_view)
     overlay.add_menu_action("Remember my patterns", lambda on: setattr(memory, "enabled", on),
                             checkable=True, checked=True)
@@ -121,12 +121,14 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     combos = {hotkeys.LOOK_HOTKEY: suggester.look_requested.emit,
               hotkeys.CAMERA_HOTKEY: overlay.camera_view_requested.emit,
               hotkeys.WORLD_HOTKEY: overlay.world_requested.emit,
-              hotkeys.SOMA_HOTKEY: suggester.toggle_requested.emit}
+              hotkeys.SOMA_HOTKEY: suggester.toggle_requested.emit,
+              hotkeys.BUBBLE_HOTKEY: overlay.bubble_toggle_requested.emit}
     registered = [hotkeys.register(emit, combo) for combo, emit in combos.items()]   # register all, no short-circuit
     hotkey_ok = all(registered)
     app.aboutToQuit.connect(hotkeys.unregister_all)
     app.aboutToQuit.connect(watcher.stop)
     app.aboutToQuit.connect(suggester.stop)
+    app.aboutToQuit.connect(overlay.bar.close)
 
     overlay.place_default()
     overlay.show()

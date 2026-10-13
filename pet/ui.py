@@ -1,4 +1,5 @@
-"""Floating overlay: the speech bubble and the camera orb (Pette's body), stacked bottom-anchored.
+"""Pette on screen: the camera orb (her body, bottom-right, draggable) and SOMA's speech bubble, docked
+at the bottom centre of the screen and toggled with Ctrl+Alt+B or the tray.
 
 Styling follows shadcn/ui (zinc palette, hairline borders, soft shadow); the bubble is frosted glass
 (translucent gradient fill, top sheen, bright inner edge) so the screen shows through. Two
@@ -35,6 +36,8 @@ STATUS = {
     "failed": ("#ef4444", "{d}"),
 }
 ORB = 116       # camera orb diameter
+BAR_MARGIN = 18 # gap between the speech bubble and the bottom of the screen (above the taskbar)
+TAIL = 10       # speech-bubble tail height
 MOODS = ("idle", "away", "blink", "sleeping")   # webcam presence / pause, drawn on the orb
 
 
@@ -88,6 +91,7 @@ class Orb(QWidget):
         self.hand: list[tuple[float, float]] = []
         self.gesture = ""
         self.camera_on = False
+        self.feed_visible = True      # Ctrl+Alt+C: hide the camera picture, keep Pette (ring, moods, clicks)
         self.state, self.detail = "idle", ""
         self.level = 0.0
         self.mood = "idle"
@@ -181,7 +185,16 @@ class Orb(QWidget):
         p.save()
         p.setClipPath(clip)
         inner = QRectF(cx - r + 3, cy - r + 3, 2 * r - 6, 2 * r - 6)
-        if self.image is not None and not self.image.isNull():
+        if not self.feed_visible:
+            p.fillRect(inner, QColor("#ede9fe"))
+            p.setPen(QPen(QColor("#8b5cf6"), 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPointF(cx, cy - 6), 20, 11)                 # a closed eye: camera hidden
+            p.drawLine(QPointF(cx - 24, cy + 8), QPointF(cx + 24, cy - 20))
+            p.setFont(_font(10))
+            p.setPen(QColor(MUTED))
+            p.drawText(inner.adjusted(0, 0, 0, -12), Qt.AlignHCenter | Qt.AlignBottom, "camera hidden")
+        elif self.image is not None and not self.image.isNull():
             p.drawImage(inner, self.image)
             if self.hand:
                 p.setPen(QPen(QColor(255, 255, 255, 220), 1.6))
@@ -218,7 +231,7 @@ class Orb(QWidget):
             p.drawText(int(cx + r - 10), int(cy - r + 22 - off // 2), "z")
             p.drawText(int(cx + r + 2), int(cy - r + 10 - off // 2), "Z")
         # gesture chip (top) and status pill (bottom), shadcn Badge style
-        if self.gesture:
+        if self.gesture and self.feed_visible:
             self._pill(p, self.gesture, cx, cy - r + 4, QColor(255, 255, 255, 235), QColor(FG), QColor(BORDER))
         text = self.label()
         if text:
@@ -279,6 +292,7 @@ class Bubble(QWidget):
             lay.addWidget(w)
         self.proposal: Proposal | None = None
         self.progress = None          # 0..1 time left on a card, drawn as a bar under it
+        self.tail = False             # draw a speech-bubble tail under the card
         self._phase = 0.0
         self._border = QTimer(self, interval=33, timeout=self._spin)
         self.primary.clicked.connect(self._approve)
@@ -346,12 +360,26 @@ class Bubble(QWidget):
         self._phase = (self._phase + 4) % 360
         self.update()
 
+    def set_tail(self, on: bool):
+        if on != self.tail:
+            self.tail = on
+            m = self.layout().contentsMargins()
+            self.layout().setContentsMargins(m.left(), m.top(), m.right(), 14 + (TAIL if on else 0))
+            self.update()
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        r = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5 - (TAIL if self.tail else 0))
         path = QPainterPath()
         path.addRoundedRect(r, 14, 14)
+        if self.tail:                 # a speech-bubble tail pointing down, slightly left of centre
+            tip = QPointF(r.center().x() - 18, r.bottom() + TAIL)
+            tail = QPainterPath(QPointF(tip.x() - 9, r.bottom() - 1))
+            tail.lineTo(tip)
+            tail.lineTo(QPointF(tip.x() + 13, r.bottom() - 1))
+            tail.closeSubpath()
+            path = path.united(tail)
         # frosted glass: translucent white body, a soft sheen across the top, bright inner edge
         body = QLinearGradient(r.topLeft(), r.bottomLeft())
         body.setColorAt(0.0, QColor(255, 255, 255, GLASS_TOP))
@@ -375,7 +403,7 @@ class Bubble(QWidget):
             p.setPen(QPen(QColor(255, 255, 255, GLASS_EDGE), 1))
             p.drawPath(inner)
         if self.progress is not None:
-            track = QRectF(r.left() + 16, r.bottom() - 6, r.width() - 32, 3)
+            track = QRectF(r.left() + 16, r.bottom() - 6, r.width() - 32, 3)   # r excludes the tail
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(255, 255, 255, 120))
             p.drawRoundedRect(track, 1.5, 1.5)
@@ -383,28 +411,62 @@ class Bubble(QWidget):
             p.drawRoundedRect(QRectF(track.left(), track.top(), track.width() * self.progress, 3), 1.5, 1.5)
 
 
+class BubbleBar(QWidget):
+    """SOMA's speech bubble as its own window, docked at the bottom centre of the screen Pette is on."""
+
+    def __init__(self, screen_of=None, avoid=None):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setWindowTitle("Pette · SOMA suggestion")
+        self.bubble = Bubble()
+        self.bubble.setFixedWidth(460)
+        self.bubble.set_tail(True)
+        self.bubble.hide()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 16, 16, 8)       # room for the glass shadow
+        lay.addWidget(self.bubble)
+        self._screen_of = screen_of or (lambda: QGuiApplication.primaryScreen())
+        self._avoid = avoid or (lambda: None)        # Pette's own window: never cover her
+
+    def reanchor(self, change, visible: bool):
+        """Apply a bubble change, resize, and dock bottom-centre; show only when there is something to say."""
+        change()
+        self.bubble.adjustSize()
+        self.adjustSize()
+        a = self._screen_of().availableGeometry()
+        g = QRect(a.center().x() - self.width() // 2, a.bottom() - self.height() - BAR_MARGIN + 8,
+                  self.width(), self.height())
+        pette = self._avoid()
+        if pette is not None and g.intersects(pette):   # small screen: slide left of Pette
+            g.moveLeft(max(a.left(), pette.left() - g.width() - 8))
+        self.setGeometry(g)
+        self.setVisible(visible and not self.bubble.isHidden())
+
+
 class Overlay(QWidget):
-    """Frameless always-on-top window: the bubble above the orb (Pette), bottom edge anchored."""
+    """Pette: the orb in its own always-on-top window, plus the bottom-of-screen speech bubble (`bar`)."""
     approved = Signal(str)
     cancelled = Signal(str)
     look_requested = Signal()         # click Pette / tray: ask SOMA to look at the screen now
     pause_toggled = Signal(bool)
     pinch_on_proposal = Signal(str)   # proposal id; pinch = "Do it" on the card
     world_requested = Signal()
-    camera_view_requested = Signal()  # hotkey: hide / show the camera orb (safe to emit from any thread)
+    camera_view_requested = Signal()  # hotkey: hide / show the camera picture (safe to emit from any thread)
+    bubble_toggle_requested = Signal()  # hotkey: speech bubble on / off (safe to emit from any thread)
+    bubble_toggled = Signal(bool)
 
     def __init__(self, tray: bool = True):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.orb = Orb()
-        self.bubble = Bubble()
-        self.bubble.hide()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 14, 14, 8)
-        lay.setSpacing(2)
-        lay.addWidget(self.bubble, 0, Qt.AlignHCenter)
         lay.addWidget(self.orb, 0, Qt.AlignHCenter)
+        self.bar = BubbleBar(screen_of=self._screen, avoid=lambda: self.geometry() if self.isVisible() else None)
+        self.bubble = self.bar.bubble
+        self.bubble_enabled = True    # Ctrl+Alt+B / tray: the speech bubble (and SOMA's cards) on or off
         self.paused = False
         self.context_allowed = True   # False while the foreground app isn't VS Code / a terminal (FocusGate)
         self.away = self.eyes_closed = False
@@ -412,8 +474,10 @@ class Overlay(QWidget):
         self.bubble.cancelled.connect(self._decided(self.cancelled))
         self.orb.clicked.connect(self._on_orb_click)
         self.camera_view_requested.connect(self.toggle_camera_view)
+        self.bubble_toggle_requested.connect(self.toggle_bubble)
         self._hide_timer = QTimer(self, singleShot=True, timeout=self.dismiss)
         self._pause_action = None
+        self._bubble_action = None
         self._tray = self._build_tray() if tray else None
 
     # --- public API -------------------------------------------------------
@@ -432,12 +496,13 @@ class Overlay(QWidget):
         self.bubble.set_progress(fraction)
 
     def set_context_allowed(self, allowed: bool):
-        """Hide Pette outside VS Code / terminals; a pending send keeps counting down."""
+        """Hide Pette (and her bubble) outside VS Code / terminals (--focus-only)."""
         self.context_allowed = allowed
         if allowed:
             self.show()
         else:
             self.hide()
+        self._reanchor(lambda: None)
 
     def reveal(self):
         if self.context_allowed:
@@ -453,16 +518,32 @@ class Overlay(QWidget):
 
     @property
     def camera_visible(self) -> bool:
-        return not self.orb.isHidden()
+        return self.orb.feed_visible
 
     def set_camera_visible(self, visible: bool):
-        """Hide or show the camera orb (preview, hand, status ring). The camera itself keeps its on/off
-        state, so pinch still works while the view is hidden; Pette stays where she is."""
-        if visible != self.camera_visible:
-            self._reanchor(lambda: self.orb.setVisible(visible))
+        """Hide or show the camera picture inside the orb. Pette (ring, moods, clicks) stays, and the camera
+        keeps its on/off state, so gestures still work while the picture is hidden."""
+        if visible != self.orb.feed_visible:
+            self.orb.feed_visible = visible
+            self.orb.update()
 
     def toggle_camera_view(self):
         self.set_camera_visible(not self.camera_visible)
+
+    def set_bubble_enabled(self, on: bool):
+        """Speech bubble on/off. Off: nothing shows at the bottom of the screen and SOMA's cards wait."""
+        if on == self.bubble_enabled:
+            return
+        self.bubble_enabled = on
+        if not on:
+            self.dismiss()
+        if self._bubble_action and self._bubble_action.isChecked() != on:
+            self._bubble_action.setChecked(on)
+        self.bubble_toggled.emit(on)
+        self.notify("Pette", "Speech bubble on." if on else "Speech bubble off: suggestions wait until it's back.")
+
+    def toggle_bubble(self):
+        self.set_bubble_enabled(not self.bubble_enabled)
 
     def pinch(self):
         """The only gesture: pinch on a suggestion card = "Do it". Otherwise ignored."""
@@ -478,7 +559,7 @@ class Overlay(QWidget):
             return
         if not self.bubble.title.text().startswith("While you were away"):
             self.bubble.title.setText(f"While you were away · {p.title}")
-        self.raise_()
+        self.bar.raise_()
 
     def add_menu_action(self, text: str, slot=None, *, checkable=False, checked=False) -> QAction | None:
         """Insert a tray action above Bring to front / Quit. No-op without a tray (tests)."""
@@ -507,13 +588,13 @@ class Overlay(QWidget):
             self._tray.showMessage(title, text, QSystemTrayIcon.Information, 4000)
 
     def say(self, text: str, title: str = "", seconds: float | None = 6):
-        if self.paused:
+        if self.paused or not self.bubble_enabled:
             return
         self._reanchor(lambda: self.bubble.show_text(text, title))
         self._arm_hide(seconds)
 
     def propose(self, p: Proposal):
-        if self.paused:
+        if self.paused or not self.bubble_enabled:
             return
         self._reanchor(lambda: self.bubble.show_proposal(p))
         self._arm_hide(None)
@@ -557,15 +638,11 @@ class Overlay(QWidget):
         self.look_requested.emit()
 
     def _reanchor(self, change):
-        """Apply a bubble change, then resize keeping the pet fixed on screen."""
-        old = self.geometry()
-        change()
-        self.bubble.adjustSize()  # shrink back when the buttons are hidden
-        self.adjustSize()
-        g = self.geometry()
-        g.moveBottom(old.bottom())
-        g.moveLeft(old.center().x() - g.width() // 2)
-        self.setGeometry(self._clamp(g))
+        """Apply a bubble change; the bar docks itself at the bottom of the screen Pette is on."""
+        self.bar.reanchor(change, visible=self.context_allowed and self.bubble_enabled and not self.paused)
+
+    def _screen(self):
+        return QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
 
     @staticmethod
     def _clamp(g: QRect) -> QRect:
@@ -581,6 +658,10 @@ class Overlay(QWidget):
         menu = QMenu()
         menu.addAction(QAction("Look at my screen now", menu, triggered=self.look_requested.emit))
         menu.addAction(QAction("World model", menu, triggered=self.world_requested.emit))
+        self._bubble_action = QAction("Speech bubble (Ctrl+Alt+B)", menu, checkable=True)
+        self._bubble_action.setChecked(True)
+        self._bubble_action.toggled.connect(lambda c: c != self.bubble_enabled and self.set_bubble_enabled(c))
+        menu.addAction(self._bubble_action)
         self._pause_action = QAction("Pause all", menu, checkable=True)
         self._pause_action.toggled.connect(lambda c: c != self.paused and self.set_paused(c))
         menu.addAction(self._pause_action)
@@ -597,3 +678,8 @@ class Overlay(QWidget):
         self.setGeometry(self._clamp(self.geometry()))
         self.show()
         self.raise_()
+        self._reanchor(lambda: None)
+
+    def closeEvent(self, e):
+        self.bar.close()
+        super().closeEvent(e)
