@@ -1,22 +1,27 @@
-"""Webcam presence: owns the optional camera worker and turns its events into Pette's reactions.
+"""Webcam presence and gestures: owns the optional camera worker and turns its events into reactions.
 
-Face away -> Pette dozes; back -> a pending send is brought to attention; eyes closed -> she blinks;
-pinch -> the same as clicking Pette (or cancels a pending send). Preview frames go straight to the orb.
-Nothing is uploaded or stored apart from event names and timings in the local db.
+Face away -> Pette dozes; back -> an open card is brought to attention; eyes closed -> she shuts hers;
+pinch -> "Do it" on a SOMA card; point left / right -> previous / next browser tab; pinch-and-drag -> scroll
+the browser (pet/browser.py; browsers only). Preview frames go straight to the orb. Nothing is uploaded or
+stored apart from event names and timings in the local db.
 """
 import time
 
 from PySide6.QtCore import QObject, Signal
 
-from .vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH, CameraWorker
+from .vision import (DRAG_END, DRAG_START, EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH, POINT_LEFT,
+                     POINT_RIGHT, CameraWorker)
 
 
 class Watcher(QObject):
     camera_status = Signal(str)
 
-    def __init__(self, overlay, *, memory=None, world=None, clock=time.monotonic, worker=CameraWorker):
+    def __init__(self, overlay, *, memory=None, world=None, browser=None, clock=time.monotonic,
+                 worker=CameraWorker):
+        """`browser` is a pet.browser.BrowserControl (optional: without it, tab/scroll gestures do nothing)."""
         super().__init__()
         self.overlay = overlay
+        self.browser = browser
         self.memory, self.world = memory, world   # db.Store / db.WorldModel, optional
         self._clock = clock
         self._worker = worker
@@ -36,6 +41,7 @@ class Watcher(QObject):
             self.camera.status.connect(self.camera_status)
             self.camera.baseline.connect(self.on_baseline)
             self.camera.frame.connect(self.on_frame)
+            self.camera.scroll.connect(self.on_scroll)
             self.camera.finished.connect(self._camera_finished)
             self.camera.start()
         elif not on and self.camera is not None:
@@ -56,8 +62,24 @@ class Watcher(QObject):
         if self.camera is not None and not self.overlay.paused:
             self.overlay.orb.set_frame(frame)
 
+    def on_scroll(self, dy: float):
+        """Pinch-and-drag movement (image heights, + = hand down): scroll the browser in front."""
+        if self.browser is not None and not self.overlay.paused:
+            self.browser.scroll(dy)
+
     def on_vision_event(self, ev: str):
         if self.overlay.paused:   # paused means no reactions and no logging
+            return
+        if ev in (POINT_LEFT, POINT_RIGHT, DRAG_START, DRAG_END):
+            self._log(ev)
+            if self.browser is None:
+                return
+            if ev == POINT_LEFT:
+                self.browser.switch_tab(-1)      # your left = previous tab
+            elif ev == POINT_RIGHT:
+                self.browser.switch_tab(+1)
+            else:
+                self.browser.reset()             # a new drag starts from zero
             return
         now = self._clock()
         self._log(ev)

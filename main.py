@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog  # noqa: E402
 
 from db import Store, WorldModel  # noqa: E402
 from pet import hotkeys, soma  # noqa: E402
+from pet.browser import BrowserControl  # noqa: E402
 from pet.focus import FocusGate  # noqa: E402
 from pet.ui import Overlay  # noqa: E402
 from pet.watcher import Watcher  # noqa: E402
@@ -45,7 +46,8 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     world = WorldModel(memory)
     suggester = soma.Suggester(overlay, connect=lambda: soma.SomaClient.from_endpoint(args.soma),
                                memory=memory, world=world)
-    watcher = Watcher(overlay, memory=memory, world=world)
+    browser = BrowserControl()
+    watcher = Watcher(overlay, memory=memory, world=world, browser=browser)
     app.aboutToQuit.connect(memory.close)
     worldwin = WorldWindow(overlay, world, suggester, watcher)
     overlay.world_requested.connect(worldwin.toggle)
@@ -88,6 +90,8 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
                                             checkable=True)
     overlay.add_menu_action(f"Hide / show camera picture ({hotkeys.CAMERA_HOTKEY.title()})",
                             overlay.toggle_camera_view)
+    overlay.add_menu_action("Browser gestures: point = switch tab, pinch + drag = scroll",
+                            lambda on: setattr(browser, "enabled", on), checkable=True, checked=True)
     overlay.add_menu_action("Remember my patterns", lambda on: setattr(memory, "enabled", on),
                             checkable=True, checked=True)
 
@@ -144,7 +148,7 @@ def build(args: argparse.Namespace) -> SimpleNamespace:
     look = f"Click me{f' (or {hotkeys.LOOK_HOTKEY.title()})' if hotkey_ok else ''} and SOMA looks at your screen now."
     overlay.say(f"I'll suggest next steps as you work. {look} Add folders from the tray so SOMA knows your files.",
                 title="Ready · SOMA", seconds=8)
-    return SimpleNamespace(app=app, overlay=overlay, memory=memory, world=world, suggester=suggester,
+    return SimpleNamespace(app=app, overlay=overlay, memory=memory, world=world, suggester=suggester, browser=browser,
                            watcher=watcher, gate=gate, camera_action=camera_action, worldwin=worldwin)
 
 
