@@ -1,6 +1,7 @@
 """Floating overlay: speech bubble, the camera orb, and the Pette sprite, stacked bottom-anchored.
 
-Styling follows shadcn/ui (zinc palette, 12px radius, hairline borders, soft shadow) with two
+Styling follows shadcn/ui (zinc palette, hairline borders, soft shadow); the bubble is frosted glass
+(translucent gradient fill, top sheen, bright inner edge) so the screen shows through. Two
 Aceternity-style touches painted in Qt: a rotating gradient "moving border" on the bubble while a send
 is counting down, and a glowing conic ring around the camera orb that changes colour with the status.
 """
@@ -10,7 +11,8 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QAction, QBrush, QColor, QConicalGradient, QFont, QGuiApplication, QIcon, QImage, QPainter, QPainterPath, QPen,
+    QAction, QBrush, QColor, QConicalGradient, QFont, QGuiApplication, QIcon, QImage, QLinearGradient, QPainter,
+    QPainterPath, QPen,
 )
 from PySide6.QtWidgets import (
     QApplication, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon,
@@ -22,7 +24,9 @@ from .sprites import ANIMATIONS, SpriteSheet
 # shadcn/ui zinc tokens
 BG, FG, MUTED, BORDER, RING = "#ffffff", "#09090b", "#71717a", "#e4e4e7", "#18181b"
 SECONDARY = "#f4f4f5"
-FONT = "'Inter', 'Segoe UI Variable Text', 'Segoe UI', sans-serif"
+# Glass (frosted, translucent) bubble: alpha 0..255 for the fill's top/bottom, the sheen and the edges.
+GLASS_TOP, GLASS_BOTTOM, GLASS_SHEEN, GLASS_EDGE, GLASS_HAIRLINE = 150, 105, 110, 190, 34
+FONT ="'Inter', 'Segoe UI Variable Text', 'Segoe UI', sans-serif"
 # status -> (ring colour, label)
 STATUS = {
     "idle": ("#a1a1aa", ""),
@@ -256,16 +260,20 @@ class Bubble(QWidget):
             QLabel#title {{ font-size: 12px; font-weight: 600; color: {MUTED}; letter-spacing: 0.2px; }}
             QLabel#body {{ font-size: 14px; }}
             QPushButton {{ font-family: {FONT}; font-size: 13px; font-weight: 500; padding: 6px 12px;
-                          border-radius: 8px; border: 1px solid {BORDER}; background: {BG}; color: {FG}; }}
-            QPushButton:hover {{ background: {SECONDARY}; }}
-            QPushButton#primary {{ background: {RING}; color: #fafafa; border-color: {RING}; }}
-            QPushButton#primary:hover {{ background: #27272a; }}
-            QPushButton:disabled {{ background: {SECONDARY}; color: #a1a1aa; border-color: {BORDER}; }}
+                          border-radius: 8px; border: 1px solid rgba(255, 255, 255, 170);
+                          background: rgba(255, 255, 255, 95); color: {FG}; }}
+            QPushButton:hover {{ background: rgba(255, 255, 255, 150); }}
+            QPushButton#primary {{ background: rgba(24, 24, 27, 215); color: #fafafa;
+                                  border-color: rgba(24, 24, 27, 230); }}
+            QPushButton#primary:hover {{ background: rgba(39, 39, 42, 235); }}
+            QPushButton:disabled {{ background: rgba(244, 244, 245, 90); color: #a1a1aa;
+                                   border-color: rgba(255, 255, 255, 120); }}
             QLineEdit {{ font-family: {FONT}; font-size: 14px; padding: 7px 10px; border-radius: 8px;
-                        border: 1px solid {BORDER}; background: {BG}; color: {FG}; }}
-            QLineEdit:focus {{ border: 1px solid #a1a1aa; }}
+                        border: 1px solid rgba(255, 255, 255, 170); background: rgba(255, 255, 255, 120);
+                        color: {FG}; }}
+            QLineEdit:focus {{ border: 1px solid rgba(113, 113, 122, 160); }}
         """)
-        shadow = QGraphicsDropShadowEffect(self, blurRadius=28, offset=QPointF(0, 6), color=QColor(0, 0, 0, 45))
+        shadow = QGraphicsDropShadowEffect(self, blurRadius=32, offset=QPointF(0, 8), color=QColor(0, 0, 0, 38))
         self.setGraphicsEffect(shadow)
         self.title = QLabel(objectName="title")
         self.body = QLabel(objectName="body", wordWrap=True, textInteractionFlags=Qt.TextSelectableByMouse)
@@ -395,20 +403,33 @@ class Bubble(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
         path = QPainterPath()
-        path.addRoundedRect(r, 12, 12)
-        p.fillPath(path, QColor(BG))
+        path.addRoundedRect(r, 14, 14)
+        # frosted glass: translucent white body, a soft sheen across the top, bright inner edge
+        body = QLinearGradient(r.topLeft(), r.bottomLeft())
+        body.setColorAt(0.0, QColor(255, 255, 255, GLASS_TOP))
+        body.setColorAt(1.0, QColor(250, 250, 252, GLASS_BOTTOM))
+        p.fillPath(path, QBrush(body))
+        sheen = QLinearGradient(r.topLeft(), QPointF(r.left(), r.top() + min(48.0, r.height() * 0.5)))
+        sheen.setColorAt(0.0, QColor(255, 255, 255, GLASS_SHEEN))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillPath(path, QBrush(sheen))
         if self._border.isActive():
             grad = QConicalGradient(r.center(), self._phase)
             for stop, c in ((0.0, "#f59e0b"), (0.25, "#ec4899"), (0.5, "#8b5cf6"), (0.75, "#3b82f6"), (1.0, "#f59e0b")):
                 grad.setColorAt(stop, QColor(c))
             p.setPen(QPen(QBrush(grad), 2))
+            p.drawPath(path)
         else:
-            p.setPen(QPen(QColor(BORDER), 1))
-        p.drawPath(path)
+            p.setPen(QPen(QColor(0, 0, 0, GLASS_HAIRLINE), 1))   # hairline so the glass reads on white
+            p.drawPath(path)
+            inner = QPainterPath()
+            inner.addRoundedRect(r.adjusted(1, 1, -1, -1), 13, 13)
+            p.setPen(QPen(QColor(255, 255, 255, GLASS_EDGE), 1))
+            p.drawPath(inner)
         if self.progress is not None:
             track = QRectF(r.left() + 16, r.bottom() - 6, r.width() - 32, 3)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(SECONDARY))
+            p.setBrush(QColor(255, 255, 255, 120))
             p.drawRoundedRect(track, 1.5, 1.5)
             p.setBrush(QColor(RING))
             p.drawRoundedRect(QRectF(track.left(), track.top(), track.width() * self.progress, 3), 1.5, 1.5)
