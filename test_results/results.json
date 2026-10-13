@@ -7,7 +7,7 @@
   {
     "check": "Unit + integration tests",
     "status": "PASS",
-    "detail": "54/54 passed, 0 failed, 0 errors, 0 skipped in 21.2s"
+    "detail": "81/81 passed, 0 failed, 0 errors, 0 skipped in 21.4s"
   },
   {
     "check": "MediaPipe models",
@@ -32,7 +32,7 @@
   {
     "check": "SOMA service (synthetic screen)",
     "status": "PASS",
-    "detail": "4.1s, decision: SPEAK Write a test for the code in \"handlers.py\"  (SUGGEST_NEXT_STEP#2 p=0.33 >= threshold 0.10 and beats NO_S"
+    "detail": "4.2s, decision: SPEAK Write a test for the code in \"handlers.py\"  (SUGGEST_NEXT_STEP#2 p=0.33 >= threshold 0.10 and beats NO_S"
   },
   {
     "check": "SOMA tests",
@@ -42,6 +42,6 @@
   {
     "check": "UI states (screenshots)",
     "status": "PASS",
-    "detail": "12/12 states rendered on the real display -> test_results/ui_states.png"
+    "detail": "15/15 states rendered on the real display -> test_results/ui_states.png"
   }
 ]
