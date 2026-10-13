@@ -54,7 +54,19 @@ SCENARIOS = [
     ("Control", "Focus gate", "Tray → Show only in VS Code / Terminal; switch to a browser.",
      "Pette hides; cards wait; back in VS Code they show again."),
     ("Control", "Offline", "Click “Stop fake SOMA”, wait ~20 s.", "Tray notification; orb “SOMA offline”."),
-    ("Orb", "Hide camera", "Ctrl+Alt+C twice.", "Orb hides and returns; Pette stays put."),
+    ("Orb", "Hide camera", "Ctrl+Alt+C twice.", "The picture in the orb becomes “camera hidden” and returns; Pette stays."),
+    ("Orb", "Click / drag", "Click the orb; then drag it somewhere else.", "Click = look now; drag moves Pette (no look)."),
+    ("Bubble", "Bottom of the screen", "Queue any card.",
+     "The glass speech bubble appears at the bottom centre of the screen (tail pointing down), not over Pette."),
+    ("Bubble", "Toggle", "Ctrl+Alt+B (or tray → Speech bubble), queue a card, Ctrl+Alt+B again.",
+     "Off: bubble gone, the card doesn't show (tray note). On: the next card shows."),
+    ("Gestures", "Next / previous tab", "Panel: “Point right (3 s)”, switch to a browser with several tabs.",
+     "After 3 s the browser goes to the next tab (log: ctrl+tab); “Point left” goes back."),
+    ("Gestures", "Scroll", "Panel: “Pinch-drag up (3 s)”, put the mouse over a long page.",
+     "The page scrolls down (log: wheel -N); “Pinch-drag down” scrolls up."),
+    ("Gestures", "Not outside a browser", "Use the same buttons with VS Code in front.", "Nothing is typed or scrolled."),
+    ("Gestures", "Real camera", "With the camera on: point left/right, pinch and move your hand.",
+     "The orb chip shows “point left/right” / “pinch”; tabs switch and the page scrolls in a browser."),
     ("World model", "Hide panel", "Ctrl+Alt+W twice.", "Panel hides and docks again."),
     ("World model", "Facts only", "Answer a few cards, open the panel.",
      "Counts per kind and folder names only; no suggestion text or file names."),
@@ -212,7 +224,8 @@ def main() -> int:
 
     import main as app_main
     from pet import hotkeys
-    from pet.vision import EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH
+    from pet.vision import (DRAG_END, DRAG_START, EYES_CLOSED, EYES_OPEN, FACE_AWAY, FACE_BACK, PINCH, POINT_LEFT,
+                            POINT_RIGHT)
 
     ctx = app_main.build(app_main.parse_args(["--soma", str(endpoint), *rest]))
     watcher, overlay, suggester = ctx.watcher, ctx.overlay, ctx.suggester
@@ -270,8 +283,37 @@ def main() -> int:
         for n, ev in (("Face away", FACE_AWAY), ("Face back", FACE_BACK), ("Eyes closed", EYES_CLOSED),
                       ("Eyes open", EYES_OPEN), ("Pinch", PINCH))
     ])
+    browser = ctx.browser
+    real_keys, real_wheel = browser._send_keys, browser._wheel
+
+    def logged_keys(combo):
+        log.appendPlainText(f"[{dt.datetime.now():%H:%M:%S}] gesture → keys {combo}")
+        real_keys(combo)
+
+    def logged_wheel(notches):
+        log.appendPlainText(f"[{dt.datetime.now():%H:%M:%S}] gesture → wheel {notches:+d}")
+        real_wheel(notches)
+
+    browser._send_keys, browser._wheel = logged_keys, logged_wheel
+
+    def later(fn):
+        return lambda: QTimer.singleShot(3000, fn)    # time to bring a browser to the front
+
+    def drag(direction):
+        watcher.on_vision_event(DRAG_START)
+        for _ in range(5):
+            watcher.on_scroll(0.04 * direction)
+        watcher.on_vision_event(DRAG_END)
+
+    group("Simulated gestures (fire after 3 s: switch to a browser)", 4, 0, [
+        ("Point left (3 s)", later(lambda: watcher.on_vision_event(POINT_LEFT))),
+        ("Point right (3 s)", later(lambda: watcher.on_vision_event(POINT_RIGHT))),
+        ("Pinch-drag up (3 s)", later(lambda: drag(-1))),
+        ("Pinch-drag down (3 s)", later(lambda: drag(+1))),
+    ])
     group("Triggers", 3, 0, [
         ("Click Pette (look now)", overlay.orb.clicked.emit),
+        ("Speech bubble on/off", overlay.toggle_bubble),
         ("Pause / resume", lambda: overlay.set_paused(not overlay.paused)),
         ("Suggestions on/off", suggester.toggle),
         ("World model window", ctx.worldwin.toggle),
@@ -282,7 +324,7 @@ def main() -> int:
     log.setPlaceholderText("Every request Pette makes to SOMA lands here.")
     box = QGroupBox("Requests to SOMA")
     QVBoxLayout(box).addWidget(log)
-    grid.addWidget(box, 0, 1, 4, 1)
+    grid.addWidget(box, 0, 1, 5, 1)
     grid.setColumnStretch(0, 3)
     grid.setColumnStretch(1, 2)
     bridge.request.connect(lambda path, body: log.appendPlainText(

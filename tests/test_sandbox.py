@@ -58,4 +58,4 @@ def test_wrong_token_is_refused(fake):
 
 def test_scenarios_are_well_formed():
     assert all(len(row) == 4 and all(row) for row in sandbox.SCENARIOS)
-    assert {"Cards", "Look now", "Folders", "Control"} <= {area for area, *_ in sandbox.SCENARIOS}
+    assert {"Cards", "Look now", "Folders", "Control", "Bubble", "Gestures"} <= {area for area, *_ in sandbox.SCENARIOS}

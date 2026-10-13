@@ -14,3 +14,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 def qapp():
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication([])
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Destroy leftover Qt windows (overlays, speech-bubble bars, world panels) while the QApplication still
+    exists; left to interpreter shutdown, Qt can crash after every test has passed."""
+    import gc
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    for w in QApplication.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    gc.collect()
