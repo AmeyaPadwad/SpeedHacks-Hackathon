@@ -27,7 +27,11 @@ py -m pytest -q                         # all tests; conftest forces QT_QPA_PLAT
 py -m pytest tests/test_pipeline.py::test_pause_drops_late_results -q   # single test
 py tools/prep_sprites.py                # rebuild assets/pette_sheet.png (needs Pillow + numpy)
 py tools/sandbox.py [--demo] [--live-webhooks] [--real-ide]   # manual test panel around the real app
+./run_pette_soma.sh [--diagnose] [pette flags]   # Git Bash: both venvs (uv), SOMA serve, then Pette --soma
+SOMA\.venv\Scripts\python.exe -m pytest -q          # SOMA's own suite, run from SOMA/
 ```
+
+Pette and SOMA use separate venvs (`.venv`, `SOMA/.venv`): mediapipe needs opencv-contrib and RapidOCR pulls opencv-python. They talk only over SOMA's localhost API.
 
 `tools/sandbox.py` reuses `main.build()`; keep wiring changes in `build()` so the sandbox stays the real app. It sets env vars before importing `main`/`pet` (they read settings at import time). Add new user-facing features to its `SCENARIOS` checklist.
 
@@ -39,7 +43,7 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
 
 - **Threading:** `Pipeline` lives on the Qt main thread. Slow work (listen/transcribe, capture + draft, dispatch) runs through `_run()` in daemon threads, and results come back through the `_deliver(gen, fn)` signal, which Qt queues onto the main thread. Never touch widgets from a worker. The `keyboard` hotkey fires on its own thread, so it must emit `pipeline.hotkey_pressed`, never call `trigger()` directly.
 - **Generation guard:** pause increments `gen`. `_on_deliver` drops any result whose `gen` is stale. Any new async step must go through `_run()` to keep this guarantee.
-- **One workflow** (`pet/pipeline.py`): click Pette / hotkey / idle pinch → `trigger()` → `listen(on_level, register_cancel)` → `_heard` (transcript shown in the bubble) → `capture()` (file + `git diff`) + `brain.draft` → `_drafted` → countdown proposal → `_approved` dispatches. States: idle, listening, thinking, pending, sending, sent, cancelled, failed, emitted on `Pipeline.status` for the orb and the world window. There is no other flow: no investigate, coding agents or proactive offers (all removed on purpose).
+- **One workflow** (`pet/pipeline.py`): click Pette / hotkey / idle pinch → `trigger()` → `listen(on_level, register_cancel)` → `_heard` (transcript shown in the bubble) → `capture()` (file + `git diff`) + `brain.draft` → `_drafted` → countdown proposal → `_approved` dispatches. States: idle, listening, thinking, pending, sending, sent, cancelled, failed, emitted on `Pipeline.status` for the orb and the world window. There is no other flow: no investigate or coding agents. The only proactive input is a SOMA suggestion (below), which the user explicitly asked for; it never acts without "Do it".
 - **Sending:** the user asked for auto-dispatch, so a draft sends itself when the countdown (`delay_s()`: `WorldModel.send_delay_s()`, 2.5–6 s) ends. The safety net is the countdown: Cancel, `pinch_on_proposal` and pause must always stop it. `Bubble.consume()` makes a decision single-use for `Proposal.id`, and dispatch happens only in `_approved(pid)` with a `pending` entry. Never dispatch straight from a brain result. Pinch is the only gesture, and the user asked for it to send: `Overlay.pinch()` on a pending draft → `Pipeline._pinch_send` (single-use via `consume()`); otherwise ignored.
 - **Errors:** each module raises one recoverable exception type (`VoiceError`, `BrainError`, `DispatchError`) with a short user-facing message, shown in the bubble with status `failed`. There are no automatic retries. A `VoiceError` (except "Listening cancelled.") falls back to `Overlay.ask_text()`.
 - **LLM provider:** Groq via the `openai` SDK with a Groq `base_url`, all in `pet/llm.py` (key, models, error text). Prompts are text-only (no screenshots). Never call `OpenAI()` directly elsewhere.
@@ -53,6 +57,12 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
   - `ANIMATIONS` in `sprites.py` maps state names to sheet frames. The frame order is a contract with `tools/prep_sprites.py`. Never load the raw `images/pette-spritesheet.png`, because it has an opaque checkerboard baked in.
 - **World-model window** (`pet/worldview.py` + `web/`): a React + Tailwind + shadcn/ui + Aceternity page built by Vite into one file, `pet/web/index.html` (committed; `web/node_modules` is ignored). Edit `web/src`, then run `cd web; npm run build`. Python pushes `WorldModel.snapshot()` + live state via `window.__pette(json)`. The page closes itself by setting `document.title = "close:…"`. Only facts go to the page, never message text or code.
 - **IDE bridge:** the VS Code extension and `context.read_active_file` share the JSON schema `{path, workspace, language, content, selection, line, diagnostics[{line, severity, message, source, code}], updatedAt}` at `~/.flowstate_current.json`, overridden by `FLOWSTATE_ACTIVE_FILE`. Keep both sides in sync. `context.git_changes()` runs `git diff HEAD -- <file>` in the file's folder (untracked = whole file as new).
+
+### SOMA suggestions (integration branch)
+- `SOMA/` is a separate PyTorch package (its own README, CLAUDE-free). `SOMA/scripts/serve.py` runs runtime + scheduler + `soma/api/local_api.py` and writes `{url, token}` to an owner-only endpoint file; `--grant-screen` is the consent opt-in, `--once` prints one decision.
+- Pette side is `pet/soma.py`: `SomaClient` (localhost only, injectable `request`) and `Suggester` (poll thread → `_arrived` signal → card via `Overlay.propose` with `Proposal(cancel_label="Not now")`). Shown only when `_free()`: not paused/busy/asking, no proposal, `context_allowed`. Accept → `COMMANDS[template]` → `Pipeline.run_command()` (normal countdown) or clipboard; never put screen text into a command except the cleaned Darwin topic.
+- `SOMA/configs/pette.yaml` + `policy.context_templates` (`soma/policy/context_candidates.py`) are why it speaks on real screens; `Candidate.template` is part of the key and the API payload. Keep SOMA's defaults (`dev.yaml`, flag off) unchanged.
+- `exclude_from_capture()` keeps Pette's windows out of SOMA's screenshots; keep it when adding windows.
 
 ### Webcam, focus, memory
 - **Webcam:** `vision.VisionPolicy` holds the debounce rules as pure logic and is unit-tested. `CameraWorker` (a QThread) emits event names, blink baselines, and a `frame` preview (`preview()`: a mirrored 168px `QImage` that owns its pixels, hand points, `gesture_name()`). The preview is only painted on the orb, never stored or sent. `Watcher` owns the camera (on by default in `main.py`) and maps events to reactions. `gesture_name()` only reports "pinch". `Overlay.pinch()`: pending draft → send now; anything else → ignored.
@@ -70,5 +80,5 @@ Offscreen Qt has no fonts, so grabbed screenshots show text as boxes.
 ## Conventions
 
 - Windows 11 first; PySide6 for UI and screen capture (not `mss`).
-- Audio, file contents, diffs and camera frames stay in memory; `Pipeline` drops `ctx` after each draft. Never persist or log them, or API keys. No screenshots.
+- Audio, file contents, diffs and camera frames stay in memory; `Pipeline` drops `ctx` after each draft. Never persist or log them, or API keys. Pette takes no screenshots; only SOMA captures the screen, in memory, with consent.
 - File text, diffs and model output are untrusted. The model can only choose among the allowlisted platforms. It never chooses URLs, commands or arbitrary mentions.
