@@ -271,9 +271,27 @@ def ui_check(app):
         ("card: next step", lambda: (camera(""), card(action="SUGGEST_NEXT_STEP", template="review_changes",
                                                       text='Review your changes to "calc.py" before you commit'))),
         ("not now", lambda: o.bubble.cancel.click()),
-        ("camera hidden (Ctrl+Alt+C)", lambda: (o.dismiss(), o.set_camera_visible(False))),
-        ("paused", lambda: (o.set_camera_visible(True), o.set_paused(True))),
+        ("point right = next tab", lambda: camera("point right")),
+        ("pinch + drag = scroll", lambda: camera("pinch")),
+        ("camera hidden (Ctrl+Alt+C)", lambda: (o.dismiss(), camera(""), o.set_camera_visible(False))),
+        ("bubble off (Ctrl+Alt+B)", lambda: (o.set_camera_visible(True), o.set_bubble_enabled(False),
+                                             card(action="SUGGEST_NEXT_STEP", text="Write a test for calc.py"))),
+        ("paused", lambda: (o.set_bubble_enabled(True), o.set_paused(True))),
     ]
+
+    def snapshot():
+        """Pette (orb window) and, when it's up, the bottom-of-screen speech bubble, side by side as on screen."""
+        orb = o.grab()
+        if not o.bar.isVisible():
+            return orb
+        bubble = o.bar.grab()
+        pm = QPixmap(bubble.width() + 24 + orb.width(), max(bubble.height(), orb.height()))
+        pm.fill(QColor(0, 0, 0, 0))
+        pt = QPainter(pm)
+        pt.drawPixmap(0, pm.height() - bubble.height(), bubble)
+        pt.drawPixmap(bubble.width() + 24, pm.height() - orb.height(), orb)
+        pt.end()
+        return pm
     done = {"v": False}
 
     def run(i=0):
@@ -282,7 +300,7 @@ def ui_check(app):
             return
         name, action = steps[i]
         action()
-        QTimer.singleShot(700, lambda: (app.processEvents(), shots.append((name, o.grab())), run(i + 1)))
+        QTimer.singleShot(700, lambda: (app.processEvents(), shots.append((name, snapshot())), run(i + 1)))
 
     QTimer.singleShot(300, run)
     deadline = time.time() + 40
@@ -297,6 +315,7 @@ def ui_check(app):
         time.sleep(0.02)
     shots.append(("world model window", win.grab()))
     o.hide()
+    o.bar.hide()
     win.hide()
     store.close()
 
