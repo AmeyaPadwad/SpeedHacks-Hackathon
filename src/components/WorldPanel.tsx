@@ -184,7 +184,7 @@ export function WorldPanel({ snapshot: d, live, folders, onClose, onScrollGestur
               {d.rules.map((r, i) => (
                 <motion.div key={r.when} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
                   className="rounded-lg border bg-muted/40 p-2.5">
-                  <div className="text-[11px] text-muted-foreground">When {r.when.charAt(0).toLowerCase() + r.when.slice(1)}</div>
+                  <div className="text-[11px] text-muted-foreground">When {/^[A-Z][a-z]/.test(r.when) ? r.when.charAt(0).toLowerCase() + r.when.slice(1) : r.when}</div>
                   <div className="text-[13px] font-medium">→ {r.then}</div>
                   <div className="mt-0.5 text-[11px] italic text-muted-foreground">because {r.why}</div>
                 </motion.div>
