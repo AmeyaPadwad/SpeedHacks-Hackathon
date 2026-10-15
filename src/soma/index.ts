@@ -63,6 +63,29 @@ export interface SomaDeps {
   timers: Timers;
   /** For tests (image sizes during indexing). */
   imageSize: IndexDeps["imageSize"];
+  /**
+   * True while the user is looking at Pette's own page. A shared screen then mostly shows Pette, so
+   * scheduled steps skip ("pette-in-front"); look-now still runs. Default: this tab is visible and focused.
+   */
+  petteInFront: () => boolean;
+}
+
+const defaultInFront = (): boolean =>
+  typeof document !== "undefined" && document.visibilityState === "visible" && document.hasFocus();
+
+/** The capturer as the runtime sees it: scheduled captures skip while Pette's page is in front. */
+export function skipWhileInFront(capturer: CapturerLike, inFront: () => boolean): CapturerLike {
+  let skipped = "";
+  return {
+    async capture(force?: boolean) {
+      skipped = !force && capturer.active && inFront() ? "pette-in-front" : "";
+      return skipped ? null : capturer.capture(force);
+    },
+    get active() { return capturer.active; },
+    get version() { return capturer.version; },
+    get lastSkipReason() { return skipped || capturer.lastSkipReason; },
+    reset: () => capturer.reset(),
+  };
 }
 
 /** `SomaService` plus handles for the app shell and tests. */
@@ -138,7 +161,7 @@ export async function createSoma(opts: { cfg?: SomaConfig; deps?: Partial<SomaDe
 
   const retriever = new MemoryRetriever(store, index, embedder, cfg.memory);
   const runtime = new SomaRuntime(cfg, {
-    capturer, embedder, retriever, ranker, clock: d.clock,
+    capturer: skipWhileInFront(capturer, d.petteInFront ?? defaultInFront), embedder, retriever, ranker, clock: d.clock,
     fileRefs: async () => (await store.allItems()).map((i) => i.sourceUri).filter((u): u is string => !!u),
   });
   runtime.onLearned = () => {

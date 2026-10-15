@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSoma, type GrantableCapturer } from "./index";
+import { createSoma, skipWhileInFront, type GrantableCapturer } from "./index";
 import { FakeDir } from "./memory/fakeFs";
 import { MemoryStore } from "./memory/store";
 import { memoryStateStore } from "./runtime/stateStore";
@@ -167,5 +167,34 @@ describe("createSoma (SomaService)", () => {
     const q = await soma.suggestion();
     expect(q.file).toBeNull();
     expect(q.line).toBeNull();
+  });
+});
+
+describe("skipWhileInFront", () => {
+  const inner = () => {
+    const calls: (boolean | undefined)[] = [];
+    return {
+      calls,
+      cap: {
+        active: true, version: 3, lastSkipReason: "rate-limited", reset: () => undefined,
+        capture: async (force?: boolean) => { calls.push(force); return null; },
+      },
+    };
+  };
+
+  it("skips scheduled captures while Pette's page is in front, but never look-now", async () => {
+    const { calls, cap } = inner();
+    let front = true;
+    const c = skipWhileInFront(cap, () => front);
+    expect(await c.capture()).toBeNull();
+    expect(c.lastSkipReason).toBe("pette-in-front");
+    expect(calls).toEqual([]);
+    await c.capture(true);
+    expect(calls).toEqual([true]);
+    front = false;
+    await c.capture();
+    expect(calls).toEqual([true, undefined]);
+    expect(c.lastSkipReason).toBe("rate-limited");
+    expect(c.version).toBe(3);
   });
 });
