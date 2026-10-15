@@ -5,7 +5,9 @@
  *
  * It ships two tiny files (`sandbox/calc.py`, `sandbox/retries.md`) so "Open" has something to show.
  */
-import type { FolderInfo, FoldersPayload, SomaService, SomaStatus, SuggestionPayload } from "@/soma/service";
+import type {
+  FolderInfo, FoldersPayload, SomaDiagnostics, SomaServiceWithDiagnostics, SomaStatus, SuggestionPayload,
+} from "@/soma/service";
 import type { FeedbackOutcome } from "@/soma/types";
 
 export type Sample = Pick<SuggestionPayload, "action" | "template" | "text" | "file" | "line" | "memorySource">;
@@ -27,7 +29,7 @@ export const SANDBOX_FILES: Record<string, string> = {
 
 export interface FakeRequest { at: number; call: string; args: unknown[] }
 
-export class FakeSoma implements SomaService {
+export class FakeSoma implements SomaServiceWithDiagnostics {
   current: SuggestionPayload = { available: true, silent: true };
   paused = false;
   capturing = false;
@@ -83,6 +85,17 @@ export class FakeSoma implements SomaService {
     return this.current;
   }
 
+  /** Scripted pipeline numbers for the dashboard (not recorded in `requests`, it polls). */
+  async diagnostics(): Promise<SomaDiagnostics> {
+    return {
+      app: this.capturing ? "code" : "", surface: this.capturing ? "monitor" : "", ocrLines: this.capturing ? 42 : 0,
+      candidates: this.capturing ? [{ action: "SUGGEST_NEXT_STEP", template: "review_changes" }, { action: "SUGGEST_NEXT_STEP", template: "write_tests" }] : [],
+      distribution: this.capturing ? { NO_SUGGESTION: 0.36, "SUGGEST_NEXT_STEP:review_changes": 0.33, "SUGGEST_NEXT_STEP:write_tests": 0.31 } : {},
+      timingsMs: this.capturing ? { capture: 20, ocr: 1700, encode: 70, policy: 250, total: 2050 } : {},
+      skips: { unchanged: 3 }, spoke: 0, tf: null,
+    };
+  }
+
   async status(): Promise<SomaStatus> {
     if (this.offline) throw new Error("SOMA isn't running."); // a read: not logged
     return { paused: this.paused, capturing: this.capturing, steps: 0, processed: 0, frameVersion: 0, lastSkipReason: null,
@@ -127,7 +140,7 @@ export class FakeSoma implements SomaService {
     return gone.reduce((a, f) => a + f.memories, 0);
   }
 
-  async readFile(ref: string): ReturnType<SomaService["readFile"]> {
+  async readFile(ref: string): ReturnType<SomaServiceWithDiagnostics["readFile"]> {
     this.record("readFile", ref);
     const text = this.files[ref];
     if (text === undefined) return null;

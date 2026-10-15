@@ -30,7 +30,9 @@ import { suggestionPayload } from "./runtime/payload";
 import { SomaRuntime, type StepResult } from "./runtime/pipeline";
 import { InferenceScheduler, type Timers } from "./runtime/scheduler";
 import { type KeyValueStore, openStateStore } from "./runtime/stateStore";
-import type { FolderInfo, FoldersPayload, SomaService, SomaStatus, SuggestionPayload } from "./service";
+import type {
+  FolderInfo, FoldersPayload, SomaDiagnostics, SomaServiceWithDiagnostics, SomaStatus, SuggestionPayload,
+} from "./service";
 import type { FeedbackOutcome } from "./types";
 
 export type { SomaService } from "./service";
@@ -89,7 +91,7 @@ export function skipWhileInFront(capturer: CapturerLike, inFront: () => boolean)
 }
 
 /** `SomaService` plus handles for the app shell and tests. */
-export interface SomaHandle extends SomaService {
+export interface SomaHandle extends SomaServiceWithDiagnostics {
   readonly runtime: SomaRuntime;
   readonly scheduler: InferenceScheduler<StepResult>;
   /** Resolves when tfjs + OCR are loaded (after the first grant). */
@@ -169,7 +171,20 @@ export async function createSoma(opts: { cfg?: SomaConfig; deps?: Partial<SomaDe
   };
   runtime.setAllowedFolders((await store.listFolders()).map((f) => f.id));
 
-  const scheduler = new InferenceScheduler(runtime, Math.max(0.25, cfg.capture.minIntervalS), { timers: d.timers });
+  // Counters for the debug dashboard (numbers only).
+  const skips: Record<string, number> = {};
+  let spoke = 0;
+  const count = (r: StepResult) => {
+    if (r.skippedReason) {
+      const why = r.skippedReason.split(":")[0];
+      skips[why] = (skips[why] ?? 0) + 1;
+    } else if (r.suggestion.candidate !== null) {
+      spoke += 1;
+    }
+  };
+  const scheduler = new InferenceScheduler(runtime, Math.max(0.25, cfg.capture.minIntervalS), {
+    timers: d.timers, onResult: count,
+  });
 
   let warm: Promise<void> | null = null;
   const warmUp = (): Promise<void> => {
@@ -215,6 +230,31 @@ export async function createSoma(opts: { cfg?: SomaConfig; deps?: Partial<SomaDe
 
     stop(): void {
       scheduler.stop();
+    },
+
+    async diagnostics(): Promise<SomaDiagnostics> {
+      const r = runtime.lastResult;
+      let tf: SomaDiagnostics["tf"] = null;
+      if (runtime.model !== null) {
+        try {
+          const t = await import("@tensorflow/tfjs");
+          const m = t.memory();
+          tf = { backend: t.getBackend() ?? "", tensors: m.numTensors, bytes: m.numBytes };
+        } catch {
+          tf = null;
+        }
+      }
+      return {
+        app: r?.window.appName ?? "",
+        surface: r?.window.surface ?? "",
+        ocrLines: r?.observation.elements.length ?? 0,
+        candidates: (r?.candidates ?? []).map((cand) => ({ action: cand.action, template: cand.template })),
+        distribution: { ...(r?.suggestion.distribution ?? {}) },
+        timingsMs: Object.fromEntries(Object.entries(r?.timingsMs ?? {}).map(([k, v]) => [k, Math.round(Number(v))])),
+        skips: { ...skips },
+        spoke,
+        tf,
+      };
     },
 
     suggestion(): Promise<SuggestionPayload> {
