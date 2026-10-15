@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `README.md` is the spec. Pette is a static web app, all TypeScript: **Pette** (`src/pette/`) is the UI and **SOMA** (`src/soma/`) is the in-browser backend (TensorFlow.js model, tesseract.js OCR, IndexedDB memory). SOMA looks at a screen the user shared (with consent) and the folders they picked, and ranks next steps. Pette shows each one as a glass card; Open / Copy (or a pinch) is the only way anything happens. Messaging (Slack, Discord, email), Darwin, Groq, voice and any server or cloud AI were removed on purpose; don't bring them back. The Python/PySide6/PyTorch version is in git history only.
 
-Pette has no sprite or image files: the camera orb is her body (click = look now, drag = move, moods drawn on a canvas). Suggestions show in a speech bubble. Gestures act inside Pette: pinch = Do it, point left/right = previous/next recent suggestion, pinch-and-drag = scroll the world panel.
+Pette has no sprite or image files: the camera orb is her body (click = look now, drag = move, moods drawn on a canvas). Suggestions show in a speech bubble. Pette follows the user across tabs and monitors in a Document Picture-in-Picture window (opened right after the screen share, the header button, or Chromium's auto-PiP). Gestures act inside Pette: pinch = Do it, point left/right = previous/next recent suggestion, pinch-and-drag = scroll the dashboard. Test in Chrome/Edge and Comet.
 
 `brainstorming/` holds two reference specs (webcam signals; screen-context companion). References only.
 
@@ -18,7 +18,7 @@ Commit and push often, after every meaningful step, without asking first. Small 
 
 ```bash
 npm ci
-npm run dev                         # ?sandbox = real UI around a scripted fake SOMA; ?debug = window.__soma
+npm run dev                         # /debug = dashboard; ?sandbox = real UI around a scripted fake SOMA; dev exposes window.__soma
 npm test                            # vitest, jsdom + fake-indexeddb
 npx vitest run src/soma/runtime     # one area
 npm run typecheck                   # tsc -b (strict)
@@ -38,7 +38,9 @@ npm run build                       # tsc -b && vite build -> dist/ (static; CI 
 - **Do it** is `src/pette/actions.ts` only: a file ref opens in Pette's read-only `FileViewer`; otherwise copy the text. Never eval, navigate, `window.open` or build a URL from SOMA's text.
 - **UI:** `PetteController` (`src/pette/controller.ts`) is an observable store (`useSyncExternalStore`) implementing `WatcherTarget` and the old Overlay methods (`say`, `propose`, `dismiss`, `setProgress`, `setStatus`, …); change bubble content only through it. Camera frames bypass React state. `pip.ts` floats the orb + bubble with Document Picture-in-Picture. Statuses idle / looking / suggesting / done / dismissed / indexing / failed map to the ring via `status.ts`.
 - **Webcam** (`src/pette/vision/`): `VisionPolicy` is pure debounce logic (time passed in); `CameraWorker` runs TF.js MediaPipeHands + FaceMesh (tfjs runtime) with injectable `getUserMedia`/detectors; blink = eye-aspect-ratio mapped to 0..1 (`landmarks.ts`). `Watcher` drives a `WatcherTarget`; paused = no reactions, no logging.
-- **World model** (`src/pette/world/`): `FactStore` (IndexedDB, in-memory mirror so `FactLog` is sync) + `WorldModel` rules → `WorldPanel`. Facts only.
+- **World model** (`src/pette/world/`): `FactStore` (IndexedDB, in-memory mirror so `FactLog` is sync) + `WorldModel` rules. Facts only.
+- **Dashboard** (`src/pette/dashboard/`, `/debug` via `debug.html`): the Pette tab publishes a `DashboardSnapshot` (live flags, `WorldModel.snapshot()`, folders, `SomaStatus`, `SomaDiagnostics`) every second on the `pette-dashboard` BroadcastChannel; the dashboard only listens (plus "hello"). There is no world panel on Pette's page. Facts and numbers only; add new stats to `SomaDiagnostics` / `PetteLive`, never text.
+- **Floating** (`src/pette/pip.ts`): `open`/`close` are stable (ref-held window) because they are media-session handlers; Comet ignores the requested size, so `fitWindow` shrinks it on the first touch inside (resizing needs a gesture) and `Floating` anchors Pette top-left. Comet's onboarding window can't host PiP; test in a normal tab.
 
 ## Conventions
 

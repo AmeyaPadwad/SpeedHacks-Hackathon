@@ -8,17 +8,18 @@ The whole thing is a static web app in TypeScript. There is no server: screen fr
 
 ```bash
 npm ci
-npm run dev        # http://localhost:5173  (?sandbox: scripted fake SOMA, ?debug: window.__soma)
+npm run dev        # http://localhost:5173  (/debug: the dashboard, ?sandbox: scripted fake SOMA)
 npm run build      # static site in dist/ (any static host; GitHub Pages via .github/workflows/web.yml)
 npm test           # vitest (jsdom, fake IndexedDB; never the real screen or camera)
 npm run typecheck
 ```
 
-Use a recent Chrome or Edge (Firefox works without folders and floating). Screen capture, the webcam and folder access need a secure context: `https://` or `localhost`.
+Use a recent Chromium browser: Chrome, Edge or Comet (Firefox works without folders and floating). Screen capture, the webcam and folder access need a secure context: `https://` or `localhost`.
 
 1. **Share a screen** on the first-run page. The browser's picker is your opt-in; SOMA sees only what you share and stops when you stop sharing or pause.
-2. **Float Pette** (settings) to keep the orb and bubble on top of your other apps (Document Picture-in-Picture).
+2. **Pette floats over every tab and app.** Right after you share, she moves into an always-on-top Picture-in-Picture window you can drag to any monitor; if the browser needs another click, press **Float Pette over all tabs**. Keep Pette's own tab open (it can sit in the background).
 3. **Add a folder** (settings): your notes, a repo or a project. SOMA indexes it (text, code, image names; size-capped) and starts pointing at those files.
+4. **Open the dashboard** (`/debug`, the **Dashboard** button or `Ctrl+Alt+W`) in another tab to watch everything Pette and SOMA do.
 
 On first use the browser downloads the model weights it needs (tesseract.js OCR data and the TF.js hand and face models); your data never goes the other way.
 
@@ -42,6 +43,7 @@ Pette: speech bubble ("SOMA suggests · Open file")  ◄── SomaService (in-p
 | A web page | *Save what you learn from "…" to your notes* | Copies the text |
 
 - A web page can't see which app is in front, so SOMA infers it (editor, terminal, browser) from the shared window's title and on-screen text.
+- A shared screen also shows Pette's own tab, so SOMA skips its timed checks while that tab is in front (look-now still runs).
 - **Click Pette** (or `Ctrl+Shift+Space`) to have SOMA look now; otherwise it checks every 2 s and stays quiet most of the time (45 s between cards, no repeats for 5 minutes).
 - A card stays 15 s (a bar drains under it). Ignoring it is not a *Not now*.
 - **Learning:** every answer goes to SOMA's online ranker (kept in IndexedDB). Pette also mutes a kind of suggestion you answer *Not now* to at least 80 % of the time (after 4 answers). The world-model panel shows why.
@@ -55,7 +57,7 @@ The orb shows **you** (a mirrored webcam preview, drawn locally only), your hand
 |---|---|
 | **Pinch** (thumb to index), held still ~0.5 s, a card is up | Same as **Open** / **Copy** |
 | **Point left / right** | Previous / next of your recent suggestions in the bubble |
-| **Pinch and drag** up / down | Scrolls the world-model panel, touch-style |
+| **Pinch and drag** up / down | Scrolls the dashboard, touch-style |
 | **Away → back** | An open card is re-titled *"While you were away · …"* |
 | **Eyes closed** | Pette shuts her eyes too |
 
@@ -68,10 +70,10 @@ A web page can't switch your browser tabs or scroll other apps, so gestures act 
 | Ctrl+Alt+S | SOMA suggestions on / off |
 | Ctrl+Alt+B | Speech bubble on / off |
 | Ctrl+Alt+C | Hide / show the camera picture in the orb (gestures still work) |
-| Ctrl+Alt+W | Hide / show the world-model panel |
+| Ctrl+Alt+W | Open the dashboard |
 
-### The world-model panel
-Live status, suggestions shown / done / not now per kind (and which are muted), the folders SOMA indexed, the explainable rules in effect, presence over the last 24 hours, and recent kinds + outcomes. Facts only: never the suggestion text, file names or screen content.
+### The dashboard (`/debug`)
+One page with every Pette + SOMA stat, live from the Pette tab over a same-origin BroadcastChannel (nothing leaves the browser): Pette's status and switches, screen and SOMA readiness, steps, suggestions, memories, tfjs backend and tensor memory; what SOMA sees on the last frame (inferred app, surface, OCR line count, candidate kinds); the last decision's probabilities; step time over the last 60 frames and per-stage timings; why steps were skipped; and the world model (suggestions per kind and which are muted, indexed folders, explainable rules, presence, recent outcomes). Without a Pette tab it shows the saved fact log. Facts and numbers only: never the suggestion text, file names or screen content. Pinch-and-drag in front of the camera scrolls it.
 
 ## Architecture
 
@@ -87,7 +89,8 @@ Live status, suggestions shown / done / not now per kind (and which are muted), 
 | SOMA runtime | `src/soma/runtime/`, `src/soma/index.ts` | One step per tick, scheduler, `createSoma()` |
 | Hub | `src/pette/suggester.ts` | Polls SOMA, shows cards when Pette is free, look-now, folders, feedback, muting |
 | Do it | `src/pette/actions.ts` | Show a file from your folders or copy text. Nothing else. |
-| UI | `src/pette/ui/`, `src/pette/controller.ts`, `src/components/` | Orb, speech bubble, file viewer, settings, world panel, floating window |
+| UI | `src/pette/ui/`, `src/pette/controller.ts`, `src/pette/pip.ts` | Orb, speech bubble, file viewer, settings, the floating window over all tabs |
+| Dashboard | `src/pette/dashboard/`, `src/components/WorldPanel.tsx` | `/debug`: live Pette + SOMA stats over a BroadcastChannel |
 | Webcam | `src/pette/vision/` | TF.js hand-pose and face-landmarks, debounce policy, watcher |
 | World model | `src/pette/world/` | IndexedDB fact log → explainable rules |
 | Sandbox | `src/pette/fakeSoma.ts`, `src/pette/Sandbox.tsx` | `?sandbox`: the real UI around a scripted fake SOMA, with a manual test checklist |
