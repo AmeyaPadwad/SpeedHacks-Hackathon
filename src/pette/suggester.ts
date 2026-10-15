@@ -92,7 +92,8 @@ export class Suggester {
   private card: string | null = null;
   private looking = false;
   private failures = 0;
-  private left = 0;
+  /** Wall-clock end of the card: hidden tabs throttle timers, so counting ticks drifts. */
+  private deadline = 0;
   private running = false;
   private generation = 0;
   private polling = false;
@@ -264,7 +265,7 @@ export class Suggester {
     this.card = p.id;
     this.set("suggesting");
     this.ui.propose(p);
-    this.left = this.showS;
+    this.deadline = Date.now() + this.showS * 1000;
     this.ui.setProgress(1);
     this.stopTick();
     this.tick = setInterval(() => this.countDown(), TICK_MS);
@@ -272,9 +273,9 @@ export class Suggester {
   }
 
   private countDown() {
-    this.left -= TICK_MS / 1000;
-    if (this.left > 1e-9) {
-      this.ui.setProgress(this.left / this.showS);
+    const left = (this.deadline - Date.now()) / 1000;
+    if (left > 1e-9) {
+      this.ui.setProgress(left / this.showS);
       return;
     }
     this.clearCard("ignored");
