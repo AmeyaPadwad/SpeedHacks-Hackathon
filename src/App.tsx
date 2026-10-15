@@ -123,11 +123,12 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
 
   // Chromium opens the floating window by itself when you switch away from a tab that is capturing
   // (automatic Picture-in-Picture), so Pette follows you to other tabs without a click.
+  const openPip = pip.open;
   useEffect(() => {
     const ms = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
     if (!ms || !pip.supported) return;
     try {
-      ms.setActionHandler("enterpictureinpicture" as MediaSessionAction, () => void pip.open());
+      ms.setActionHandler("enterpictureinpicture" as MediaSessionAction, () => void openPip());
     } catch {
       return; // not supported here: the button still works
     }
@@ -138,7 +139,7 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
         // ignore
       }
     };
-  }, [pip]);
+  }, [pip.supported, openPip]);
 
   // --- dashboard ---------------------------------------------------------------
   const openDashboard = useCallback(() => {
