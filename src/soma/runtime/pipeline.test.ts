@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ActionType, candidateKey, FeedbackOutcome, SourceType } from "../types";
 import { mem } from "../policy/testUtil";
 import { REVIEW_CHANGES, WRITE_TESTS } from "../policy/contextCandidates";
+import { OnlinePreferenceRanker } from "../learning/preferenceRanker";
 import { SomaRuntime } from "./pipeline";
 import {
   CharEmbedder,
@@ -220,7 +221,7 @@ describe("SomaRuntime", () => {
 
   it("the ranker bias can change the winner", async () => {
     const ranker = new FakeRanker();
-    ranker.bias = (_c, embs) => Float32Array.from(embs.map((_, i) => (i === 1 ? 5 : 0)));
+    ranker.biasFn = (i) => (i === 1 ? 5 : 0);
     const { rt } = setup({ ranker });
     const r = await rt.step();
     expect(r.suggestion.candidate?.template).toBe(WRITE_TESTS);
@@ -250,5 +251,26 @@ describe("SomaRuntime", () => {
     expect(rt.ledger.executors.size).toBe(0);
     expect(rt.ledger.executedCount).toBe(0);
     expect(rt.ledger.unapprovedExecutionCount).toBe(0);
+  });
+
+  it("feedback hands back a text-free snapshot and trains the real preference ranker", async () => {
+    const cfg = testConfig({ cooldownS: 0, duplicateWindowS: 0 });
+    const ranker = new OnlinePreferenceRanker();
+    const rt = new SomaRuntime(cfg, { capturer: new FakeCapturer(EDITOR), ocr: new LinesOcr(["def f():"]),
+      model: new FakeModel(cfg.model.dModel), embedder: new CharEmbedder(cfg.model.dModel), ranker });
+    let learned = 0;
+    rt.onLearned = () => learned++;
+    const r = await rt.step();
+    const shown = r.suggestion.candidate!;
+    const snap = await rt.feedback(r.suggestion.id, FeedbackOutcome.REJECTED);
+    expect(snap?.candidateKey).toBe(candidateKey(shown));
+    expect(snap?.app).toBe("code");
+    expect(snap?.shownIndex).toBe(1);
+    expect(snap?.context).toBeInstanceOf(Float32Array);
+    expect(JSON.stringify(snap)).not.toContain("def f()");
+    expect(await rt.feedback(r.suggestion.id, FeedbackOutcome.ACCEPTED)).toBeNull(); // single use
+    expect(ranker.updates).toBe(1);
+    expect(learned).toBe(1);
+    expect(ranker.candidateBias("code", shown.action, candidateKey(shown))).toBeLessThan(0);
   });
 });

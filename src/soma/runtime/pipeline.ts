@@ -21,6 +21,8 @@
 import { redactObservation, redactText } from "../capture/redaction";
 import { inferWindow, isExcluded } from "../capture/window";
 import type { SomaConfig } from "../config";
+import { FeedbackBook, type FeedbackSnapshot } from "../learning/feedback";
+import { applyBias } from "../learning/preferenceRanker";
 import { ScreenHistory } from "../models/history";
 import { appBucket, imageToPixels, observationToArrays } from "../perception/featurize";
 import { parseScreen } from "../perception/screenParser";
@@ -72,15 +74,11 @@ export interface StepResult {
   skippedReason: string | null;
 }
 
-/** What is kept per shown suggestion for feedback: model vectors and ids, never pixels or screen text. */
+/** Routing state per shown suggestion (the learning snapshot lives in the `FeedbackBook`). */
 interface Shown {
   suggestion: Suggestion;
   candidate: Candidate;
-  /** Logit index (1..A). */
-  shownIndex: number;
   app: string;
-  context: Float32Array;
-  candidateEmbedding: Float32Array;
   resolved: boolean;
 }
 
@@ -100,6 +98,8 @@ export interface RuntimeDeps {
   clock?: Clock;
   /** Every indexed file ref (`folderId/relative/path`), to authorize paths seen on screen. */
   fileRefs?: () => Promise<Iterable<string>>;
+  /** Snapshots of shown suggestions (model vectors only) for learning. */
+  feedbackBook?: FeedbackBook;
   /** Called after feedback updated the ranker (the service persists it). */
   onLearned?: () => void;
 }
@@ -127,6 +127,8 @@ export class SomaRuntime {
   /** Suggestions are never executed: this ledger has no executors. */
   readonly ledger = new ApprovalLedger();
   readonly history: ScreenHistory;
+  /** Feature snapshots of shown suggestions: model vectors and ids, never pixels or screen text. */
+  readonly feedbackBook: FeedbackBook;
 
   steps = 0;
   processed = 0;
@@ -142,7 +144,8 @@ export class SomaRuntime {
   private files = new FileRefIndex();
   private filesStale = true;
   private readonly fileRefs?: () => Promise<Iterable<string>>;
-  private readonly onLearned?: () => void;
+  /** Called after feedback trained the ranker (the service persists it). */
+  onLearned?: () => void;
 
   constructor(readonly cfg: SomaConfig, deps: RuntimeDeps) {
     this.capturer = deps.capturer ?? null;
@@ -155,6 +158,7 @@ export class SomaRuntime {
     this.candidateEncoder = deps.candidateEncoder
       ?? new CandidateEncoder(cfg.model.dModel, deps.embedder, cfg.model.nActionTypes, cfg.seed);
     this.history = new ScreenHistory(cfg.model.historyLen, { dim: cfg.model.dModel });
+    this.feedbackBook = deps.feedbackBook ?? new FeedbackBook(MAX_PENDING);
     this.fileRefs = deps.fileRefs;
     this.onLearned = deps.onLearned;
   }
@@ -312,11 +316,9 @@ export class SomaRuntime {
       candidateTypes: enc.types,
       candidateMask: enc.mask,
     }, this.history.states());
-    const logits = Float32Array.from(out.logits);
+    let logits = Float32Array.from(out.logits);
     if (this.ranker !== null && candidates.length) {
-      const n = Math.min(candidates.length, logits.length - 1);
-      const bias = this.ranker.bias(out.temporalState, enc.embeddings.slice(0, n));
-      for (let i = 0; i < n; i++) if (Number.isFinite(bias[i])) logits[i + 1] += bias[i];
+      logits = applyBias(logits, this.ranker.bias(candidates, window.appName, logits.length - 1));
     }
     timings.policy = performance.now() - t;
 
@@ -411,25 +413,27 @@ export class SomaRuntime {
 
   private remember(suggestion: Suggestion, candidate: Candidate, shownIndex: number, app: string,
     context: Float32Array, candidateEmbedding: Float32Array): void {
-    this.gate.recordShown(candidateKey(candidate));
-    this.shown.set(suggestion.id, { suggestion, candidate, shownIndex, app, resolved: false,
-      context: Float32Array.from(context), candidateEmbedding: Float32Array.from(candidateEmbedding) });
+    const key = candidateKey(candidate);
+    this.shown.set(suggestion.id, { suggestion, candidate, app, resolved: false });
+    this.feedbackBook.remember(suggestion.id, { app, action: candidate.action, candidateKey: key, shownIndex,
+      context, candidateEmbedding });
+    this.gate.recordShown(key);
     while (this.shown.size > MAX_PENDING) this.shown.delete(this.shown.keys().next().value!);
   }
 
   /**
    * Route explicit feedback on a shown suggestion. REJECTED dismisses the candidate in the gate (not repeated
-   * within the duplicate window). ACCEPTED / REJECTED / EDITED train the online ranker; IGNORED is ambiguous
-   * and never treated as a negative. Unknown ids are ignored.
+   * within the duplicate window). ACCEPTED / REJECTED / EDITED train the online preference ranker (feedback
+   * storage is always on and local); IGNORED is ambiguous and never treated as a negative. Unknown or
+   * already answered ids are ignored. Returns the learning snapshot (null when unknown).
    */
-  async feedback(suggestionId: string, outcome: FeedbackOutcome): Promise<void> {
+  async feedback(suggestionId: string, outcome: FeedbackOutcome): Promise<FeedbackSnapshot | null> {
     const entry = this.shown.get(suggestionId);
-    if (!entry || entry.resolved) return;
+    if (!entry || entry.resolved) return null;
     entry.resolved = true;
+    const snapshot = this.feedbackBook.take(suggestionId);
     if (outcome === FeedbackOutcome.REJECTED) this.gate.recordDismissed(candidateKey(entry.candidate));
-    if (outcome !== FeedbackOutcome.IGNORED && this.ranker !== null) {
-      await this.ranker.update(entry.context, entry.candidateEmbedding, outcome);
-      this.onLearned?.();
-    }
+    if (this.ranker !== null && this.ranker.updateCandidate(entry.candidate, entry.app, outcome)) this.onLearned?.();
+    return snapshot;
   }
 }

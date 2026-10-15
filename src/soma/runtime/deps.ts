@@ -1,6 +1,6 @@
 /**
  * The narrow, structural views the runtime has of its collaborators. The real classes
- * (`ScreenCapturer`, `TesseractOcr`, `SomaModel`, `MemoryRetriever`, `TextEmbedder`, `OnlineRanker`) satisfy
+ * (`ScreenCapturer`, `TesseractOcr`, `SomaModel`, `MemoryRetriever`, `TextEmbedder`, `OnlinePreferenceRanker`) satisfy
  * them; tests pass small fakes. Keeping the runtime on these interfaces means it never imports tfjs or
  * tesseract itself, so they load lazily (see `soma/index.ts`).
  */
@@ -8,7 +8,7 @@ import type { CapturedFrame } from "../capture/screen";
 import type { ScreenInputs, StepInputs } from "../models/batch";
 import type { StepOutput } from "../models/somaModel";
 import type { OcrEngine } from "../perception/ocr";
-import type { FeedbackOutcome, RetrievedMemory } from "../types";
+import type { Candidate, FeedbackOutcome, RetrievedMemory } from "../types";
 
 export type { OcrEngine };
 
@@ -40,9 +40,13 @@ export interface RetrieverLike {
   retrieve(queryText: string, k?: number): Promise<RetrievedMemory[]>;
 }
 
-/** `OnlineRanker`: a small learned bias over candidate slots, trained from explicit feedback. */
+/**
+ * `OnlinePreferenceRanker` (learning/preferenceRanker.ts): per-app Beta-Bernoulli arms over action types,
+ * candidate keys and abstention, trained from explicit feedback. Never touches the model's weights.
+ */
 export interface RankerLike {
-  /** One additive logit bias per candidate embedding. */
-  bias(context: Float32Array, candidateEmbeddings: Float32Array[]): Float32Array;
-  update(context: Float32Array, candidateEmbedding: Float32Array, outcome: FeedbackOutcome): Promise<void>;
+  /** Additive logit bias `[A + 1]` (index 0 = NO_SUGGESTION), padded to `nSlots`. */
+  bias(candidates: (Candidate | null)[], app: string, nSlots?: number): Float32Array;
+  /** Count one explicit outcome; false (no-op) for IGNORED. */
+  updateCandidate(candidate: Candidate, app: string, outcome: FeedbackOutcome): boolean;
 }

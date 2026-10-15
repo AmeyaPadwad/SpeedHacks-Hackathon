@@ -4,7 +4,7 @@ import { DEFAULT_CONFIG, type ModelConfig, type SomaConfig } from "../config";
 import type { ScreenInputs, StepInputs } from "../models/batch";
 import type { StepOutput } from "../models/somaModel";
 import type { OcrEngine } from "../perception/ocr";
-import type { FeedbackOutcome, OCRElement, RetrievedMemory } from "../types";
+import type { Candidate, FeedbackOutcome, OCRElement, RetrievedMemory } from "../types";
 import type { CapturerLike, EmbedderLike, ModelLike, RankerLike, RetrieverLike } from "./deps";
 
 export const smallModel = (over: Partial<ModelConfig> = {}): ModelConfig => ({
@@ -117,13 +117,18 @@ export class FakeRetriever implements RetrieverLike {
 }
 
 export class FakeRanker implements RankerLike {
-  updates: { outcome: FeedbackOutcome; context: Float32Array; candidate: Float32Array }[] = [];
-  constructor(public biasValue = 0) {}
-  bias(_context: Float32Array, candidateEmbeddings: Float32Array[]): Float32Array {
-    return new Float32Array(candidateEmbeddings.length).fill(this.biasValue);
+  updates: { outcome: FeedbackOutcome; candidate: Candidate; app: string }[] = [];
+  /** Bias per candidate index (default 0). */
+  biasFn: (i: number, c: Candidate) => number = () => 0;
+  bias(candidates: (Candidate | null)[], _app: string, nSlots = 0): Float32Array {
+    const out = new Float32Array(Math.max(candidates.length, nSlots) + 1);
+    candidates.forEach((c, i) => { if (c) out[i + 1] = this.biasFn(i, c); });
+    return out;
   }
-  async update(context: Float32Array, candidate: Float32Array, outcome: FeedbackOutcome): Promise<void> {
-    this.updates.push({ outcome, context, candidate });
+  updateCandidate(candidate: Candidate, app: string, outcome: FeedbackOutcome): boolean {
+    if (outcome === "ignored") return false;
+    this.updates.push({ outcome, candidate, app });
+    return true;
   }
 }
 
