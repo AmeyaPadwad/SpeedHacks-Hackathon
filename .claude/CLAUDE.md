@@ -4,57 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-`README.md` is the spec. **Pette** is only the UI; **SOMA** (`SOMA/`, its own PyTorch package and venv) is the backend. SOMA looks at the screen (with consent) and the folders the user indexed, and ranks next steps. Pette shows each one as a glass card; Open / Copy (or a pinch) is the only way anything happens. Messaging (Slack, Discord, email), Darwin, Groq and voice were removed on purpose; don't bring them back.
+`README.md` is the spec. Pette is a static web app, all TypeScript: **Pette** (`src/pette/`) is the UI and **SOMA** (`src/soma/`) is the in-browser backend (TensorFlow.js model, tesseract.js OCR, IndexedDB memory). SOMA looks at a screen the user shared (with consent) and the folders they picked, and ranks next steps. Pette shows each one as a glass card; Open / Copy (or a pinch) is the only way anything happens. Messaging (Slack, Discord, email), Darwin, Groq, voice and any server or cloud AI were removed on purpose; don't bring them back. The Python/PySide6/PyTorch version is in git history only.
 
-`brainstorming/` holds two reference specs (webcam signals; screen-context companion). They're references only: this is Python + PySide6, not the Electron stack described there.
+Pette has no sprite or image files: the camera orb is her body (click = look now, drag = move, moods drawn on a canvas). Suggestions show in a speech bubble. Gestures act inside Pette: pinch = Do it, point left/right = previous/next recent suggestion, pinch-and-drag = scroll the world panel.
+
+`brainstorming/` holds two reference specs (webcam signals; screen-context companion). References only.
 
 ## Git workflow
 
-Commit and push often, after every meaningful step, without asking first. Small or work-in-progress commits are fine. Work on the `dev` branch, never directly on `main` (the SOMA integration lives on `integration`).
+Commit and push often, after every meaningful step, without asking first. Small or work-in-progress commits are fine. The web port lives on `Pette-SOMA`; never commit directly to `main`.
 
 ## Commands
 
 ```bash
-./run_pette_soma.sh [--diagnose] [pette flags]      # Git Bash: both venvs (uv), SOMA serve, then Pette --soma <endpoint>
-.venv/Scripts/python.exe -m pytest -q               # Pette tests; conftest forces QT_QPA_PLATFORM=offscreen
-.venv/Scripts/python.exe -m pytest tests/test_soma.py::test_click_looks_now_then_card_or_nothing -q
-cd SOMA; .venv/Scripts/python.exe -m pytest -q      # SOMA's own suite
-.venv/Scripts/python.exe tools/run_checks.py [--no-camera] [--no-soma-tests]   # regenerates test_results/
-.venv/Scripts/python.exe tools/sandbox.py [--real-soma EP]   # real app + panel around a scripted fake SOMA
-.venv/Scripts/python.exe tools/get_models.py        # MediaPipe models (gitignored)
-.venv/Scripts/python.exe tools/prep_sprites.py      # rebuild assets/pette_sheet.png (needs Pillow + numpy)
-cd web; npm ci; npm run build                       # rebuild pet/web/index.html (committed) after editing web/src
+npm ci
+npm run dev                         # ?sandbox = real UI around a scripted fake SOMA; ?debug = window.__soma
+npm test                            # vitest, jsdom + fake-indexeddb
+npx vitest run src/soma/runtime     # one area
+npm run typecheck                   # tsc -b (strict)
+npm run build                       # tsc -b && vite build -> dist/ (static; CI deploys main to GitHub Pages)
 ```
-
-Pette and SOMA use separate venvs (`.venv`, `SOMA/.venv`): mediapipe needs opencv-contrib and RapidOCR pulls opencv-python. They talk only over SOMA's localhost API. `tools/sandbox.py` reuses `main.build()`; keep wiring there so the sandbox stays the real app, and add user-facing features to its `SCENARIOS`. Offscreen Qt has no fonts, so offscreen screenshots show text as boxes (run_checks renders on the real display).
 
 ## Architecture
 
-`pet/soma.py` is the hub. Read it first.
+`src/soma/service.ts` (`SomaService`) is the only contract between Pette and SOMA; `src/pette/suggester.ts` is Pette's hub. Read both first.
 
-- **SomaClient** wraps SOMA's API (`SOMA/soma/api/local_api.py`): `/suggestion`, `/feedback`, `/trigger` (look now), `/pause`, `/resume`, `/folders` (GET, POST add + background index), `/folders/remove`. Localhost URLs only; `request` is injectable. The endpoint file `{url, token}` comes from `SOMA/scripts/serve.py --endpoint-file` (`PETTE_SOMA_ENDPOINT` / `--soma`).
-- **Suggester** lives on the Qt main thread. A worker polls `/suggestion` every second (`poll_once`, emits `_arrived`); every other call goes through `_async(work, on_ok, on_err)`, which returns via the `_result` signal. Never touch widgets from a worker. Hotkeys fire on the keyboard thread and must only emit signals (`look_requested`, `toggle_requested`, `Overlay.camera_view_requested`, `Overlay.world_requested`).
-- **Cards:** shown only when `_free()` (enabled, not paused, `context_allowed`, no proposal up) via `Overlay.propose(Proposal(..., cancel_label="Not now", glow=True))`, with a 15 s `set_progress` bar. `Bubble.consume()` makes a decision single-use; pinch goes through `_pinched` → `consume()`. Outcomes: accepted / rejected (Not now) / ignored (expired, paused, toggled off; never a dismissal). Each is sent to SOMA and logged as `offers(kind, outcome)`.
-- **Do it** is `pet/actions.py` only: `opener(s)` picks `file`+`line` or `memory_source` (SOMA only sends paths inside the user's allowed folders); `open_file` uses `code -g` when on PATH, `startfile` for images only, else `explorer /select`. Never `startfile` a non-image, never a shell, never run anything. Otherwise copy the text.
-- **Statuses** (`Suggester.status` → `Overlay.set_status` and the world window): idle, looking, suggesting, done, dismissed, indexing, failed. `STATUS` in `ui.py` maps them to ring colour/label.
-- **Muting** (`WorldModel.muted_kinds`): a kind answered Not now ≥ 80 % over ≥ 4 answers is skipped unless the user clicked "look now".
-- **exclude_from_capture()** keeps Pette's windows out of SOMA's screenshots; apply it to any new top-level window.
-- **Dependency injection:** `Suggester`, `SomaClient`, `actions.open_file`, `Watcher` take collaborators as parameters (client, spawn, clipboard, open_file, request). Tests pass fakes and `spawn=lambda f: f()`; keep a reference to a `Suggester` in tests or Qt drops its connections.
-- **UI** (`pet/ui.py`): bubble → `Orb` → `PetWidget`, bottom-anchored. `Overlay._reanchor` keeps Pette fixed while the bubble resizes; change bubble content only through `Overlay` methods. The bubble is frosted glass (`GLASS_*` alphas). `ANIMATIONS` in `sprites.py` is a contract with `tools/prep_sprites.py`; never load the raw `images/pette-spritesheet.png`.
-- **World-model window** (`pet/worldview.py` + `web/`): React + Tailwind + shadcn/ui + Aceternity, built by Vite into `pet/web/index.html`. Python pushes `WorldModel.snapshot()` + live state + folder names/counts via `window.__pette(json)`. Facts only: never suggestion text, file names or screen content.
-
-### SOMA side (what Pette relies on)
-- `SOMA/configs/pette.yaml` + `policy.context_templates` (`soma/policy/context_candidates.py`: review_changes, write_tests, commit_work, take_notes) are why SOMA speaks on real screens. Keep SOMA's defaults (`dev.yaml`, flag off) unchanged.
-- `Candidate.template` (part of the key) and `Candidate.line` (not part of the key) are in the API payload with `file` and `memory_source` (only when `runtime.authorized_file` allows the path).
-- `SOMA/tests/conftest.py` destroys leftover Qt widgets at session end; without it the suite crashes at exit after passing.
-
-### Webcam, focus, memory
-- **Webcam:** `vision.VisionPolicy` holds the debounce rules as pure logic. `CameraWorker` (QThread) emits events and a `frame` preview drawn only on the orb, never stored or sent. `Watcher` maps events to reactions; pinch → `Overlay.pinch()` → card "Do it", otherwise ignored. `Overlay.set_camera_visible` hides the orb only (camera keeps running).
-- **Focus gate** (`pet/focus.py`): off by default; `--focus-only` or the tray shows Pette only over VS Code/terminals. `classify()` returns None for Pette's own process and tray/taskbar classes. After a temporary hide use `Overlay.reveal()`, never `show()`.
-- **Memory** (`db/`): thread-safe SQLite fact log (`events`, `offers`, `blink_baseline`; the old `messages` table is dropped at startup) and `WorldModel` rules. Only facts go in; `tests/test_db.py` checks for content columns. `memory=`/`world=` stay optional.
+- **SomaService** replaces SOMA's old localhost API with in-page calls: `grantScreen`/`revokeScreen`, `suggestion`, `status`, `feedback`, `trigger` (look now), `pause`/`resume`, `folders`/`addFolder`/`removeFolder`, `readFile`. `createSoma()` (`src/soma/index.ts`) builds the real one and lazily loads tfjs (webgl, else cpu) and tesseract on the first grant. `FakeSoma` (`src/pette/fakeSoma.ts`) is the scripted fake for tests and `?sandbox`; add user-facing features to its scenarios and the `Sandbox.tsx` checklist.
+- **SOMA runtime** (`src/soma/runtime/pipeline.ts`): one serialized `step()`: capture → OCR → `inferWindow` → exclusion → parse → redact → featurize → `encodeScreen` once → retrieval → candidates (+ context templates) → blocked mask → candidate encoder → `score` → preference-ranker bias → `SafetyGate`. Collaborators are narrow interfaces in `runtime/deps.ts`, so the runtime never imports tfjs/tesseract and tests use `runtime/testFakes.ts`. Nothing executes; `ApprovalLedger` has no executors.
+- **App inference:** a web page can't see the foreground app, so `capture/window.ts` maps the track label and on-screen text to canonical names (`code`, `windowsterminal`, `chrome`, …) that `policy/contextCandidates.ts` (`appKind`) understands. Keep the two in sync.
+- **Files:** a folder is a `FileSystemDirectoryHandle` in IndexedDB; refs are `folderId/relative/path`. Only `memory/access.ts` resolves refs (rejects `..`, absolute paths, unknown folders). On-screen paths map to refs via `runtime/files.ts` (`FileRefIndex`, whole trailing path, never ambiguous bare names).
+- **Model** (`src/soma/models/`): seeded weights (same untrained model every load), inference in `tf.tidy`, no tensor leaks (tests check `tf.memory()`), weights saved to `indexeddb://soma-model`. Index 0 of logits is NO_SUGGESTION. The ranker in use is `OnlinePreferenceRanker` (JSON in the `soma-runtime` DB); the memory DB is `soma`. Don't share DB names.
+- **Suggester** (framework-free, injected clock/timers): polls `suggestion()` every second; cards only when `_free()` (enabled, not paused, bubble on, no proposal up) via the controller's `propose`, 15 s progress bar. `consume()` makes a decision single-use; pinch goes through it. Outcomes: accepted / rejected (Not now) / ignored (expired, paused, toggled off; never a dismissal), each sent to SOMA and logged as `logOffer(kind, outcome)`. Muting: Not now ≥ 80 % over ≥ 4 answers, skipped on look-now.
+- **Do it** is `src/pette/actions.ts` only: a file ref opens in Pette's read-only `FileViewer`; otherwise copy the text. Never eval, navigate, `window.open` or build a URL from SOMA's text.
+- **UI:** `PetteController` (`src/pette/controller.ts`) is an observable store (`useSyncExternalStore`) implementing `WatcherTarget` and the old Overlay methods (`say`, `propose`, `dismiss`, `setProgress`, `setStatus`, …); change bubble content only through it. Camera frames bypass React state. `pip.ts` floats the orb + bubble with Document Picture-in-Picture. Statuses idle / looking / suggesting / done / dismissed / indexing / failed map to the ring via `status.ts`.
+- **Webcam** (`src/pette/vision/`): `VisionPolicy` is pure debounce logic (time passed in); `CameraWorker` runs TF.js MediaPipeHands + FaceMesh (tfjs runtime) with injectable `getUserMedia`/detectors; blink = eye-aspect-ratio mapped to 0..1 (`landmarks.ts`). `Watcher` drives a `WatcherTarget`; paused = no reactions, no logging.
+- **World model** (`src/pette/world/`): `FactStore` (IndexedDB, in-memory mirror so `FactLog` is sync) + `WorldModel` rules → `WorldPanel`. Facts only.
 
 ## Conventions
 
-- Windows 11 first; PySide6 for UI.
-- Pette takes no screenshots and records no audio; only SOMA captures the screen, in memory, with consent. Camera frames stay in memory. Never persist or log screen text, suggestion text, file contents or paths in Pette's db.
-- Screen text, file contents and SOMA's suggestion text are untrusted: they're displayed or copied, never executed, and never turned into commands or URLs.
+- TypeScript strict, React 18, Tailwind + shadcn tokens, `@/` alias. Tests sit next to the code as `*.test.ts(x)`; inject fakes, never the real camera or screen.
+- Only SOMA captures the screen, in memory, after the user's share. Camera frames stay in memory and are drawn only on the orb. Never persist or log screen text, suggestion text, file contents or paths in Pette's fact log.
+- Screen text, file contents and SOMA's suggestion text are untrusted: displayed as text (never innerHTML) or copied, never executed, never turned into commands or URLs.

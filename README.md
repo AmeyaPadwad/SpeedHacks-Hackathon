@@ -1,114 +1,104 @@
 # Pette - the on-screen face of SOMA
 
-**Pette** is a small animated companion on your desktop. **SOMA** is the brain behind her: it looks at your screen (with your consent), searches the folders you let it index, and ranks what you might want to do next with its own PyTorch model. Pette shows each suggestion as a glass card. Nothing happens until you press **Open** / **Copy** (or pinch).
+**Pette** is a glowing camera orb. **SOMA** is the brain behind her: it looks at a screen or window you share (with your consent), searches the folders you let it index, and ranks what you might want to do next with its own neural model, running in your browser on [TensorFlow.js](https://www.tensorflow.org/js). Pette shows each suggestion in a glass speech bubble. Nothing happens until you press **Open** / **Copy** (or pinch).
 
-Pette is only the UI. She sends no messages, calls no cloud AI and records no audio. SOMA runs locally in its own process ([SOMA/README.md](SOMA/README.md)).
+The whole thing is a static web app in TypeScript. There is no server: screen frames, OCR, the model, your folder index and Pette's fact log all live in the browser tab. Pette sends no messages, calls no cloud AI and records no audio.
 
-## Quick start (Windows 11, Git Bash, [uv](https://docs.astral.sh/uv/))
+## Quick start
 
 ```bash
-./run_pette_soma.sh              # first run sets up .venv (Pette) and SOMA/.venv (SOMA), then starts both
-./run_pette_soma.sh --focus-only # extra flags go to Pette: --focus-only, --no-camera, --no-world
-./run_pette_soma.sh --diagnose   # one SOMA step on the current screen: why it would suggest something or stay silent
+npm ci
+npm run dev        # http://localhost:5173  (?sandbox: scripted fake SOMA, ?debug: window.__soma)
+npm run build      # static site in dist/ (any static host; GitHub Pages via .github/workflows/web.yml)
+npm test           # vitest (jsdom, fake IndexedDB; never the real screen or camera)
+npm run typecheck
 ```
 
-Running the script is your opt-in for SOMA to capture the screen (stored in `SOMA/data/consent.json`). Quit Pette from the tray; SOMA stops with her.
+Use a recent Chrome or Edge (Firefox works without folders and floating). Screen capture, the webcam and folder access need a secure context: `https://` or `localhost`.
 
-Then, from Pette's tray: **Add a folder for SOMA…** and pick your notes, a repo or a project folder. SOMA indexes it (text, code, images; size-capped) and starts pointing at those files in its suggestions.
+1. **Share a screen** on the first-run page. The browser's picker is your opt-in; SOMA sees only what you share and stops when you stop sharing or pause.
+2. **Float Pette** (settings) to keep the orb and bubble on top of your other apps (Document Picture-in-Picture).
+3. **Add a folder** (settings): your notes, a repo or a project. SOMA indexes it (text, code, image names; size-capped) and starts pointing at those files.
+
+On first use the browser downloads the model weights it needs (tesseract.js OCR data and the TF.js hand and face models); your data never goes the other way.
 
 ## How it works
 
 ```
-your screen ──► SOMA: capture (consent, exclusions) → OCR → screen + memory fusion → ranked next steps → safety gate
-your folders ─┘                                                                                      │
-                                                                localhost API (token) ◄───────────────┘
-                                                                        │
-Pette: glass card ("SOMA suggests · Open file")  ── Open / Copy / Not now / pinch ──► feedback back to SOMA
+shared screen ─► SOMA: capture (change detection, exclusions) → OCR (tesseract.js) → redaction
+your folders ──┘      → screen + memory fusion (TF.js) → candidates → online ranker → safety gate
+                                                                                      │
+Pette: speech bubble ("SOMA suggests · Open file")  ◄── SomaService (in-page) ◄──────┘
+       ── Open / Copy / Not now / pinch ──► feedback back to SOMA (trains the ranker)
 ```
 
 | SOMA sees | Card | Open / Copy does |
 |---|---|---|
-| A `file.py:40` reference or traceback, in a folder you indexed | *Open calc.py at line 40* | Opens it in VS Code at that line |
-| Something related in your indexed files | *Compare with your earlier document "…"* | Opens that file |
+| A `file.py:40` reference or traceback, in a folder you indexed | *Open calc.py at line 40* | Shows the file in Pette's viewer at that line |
+| Something related in your indexed files | *Compare with your earlier document "…"* | Shows that file |
 | An error | *Explain the error "…"* | Copies the text for your coding agent |
 | A file in your editor | *Review your changes to "app.py" before you commit*, *Write a test for the code in "app.py"* | Copies the text |
 | A passing test run | *The tests pass: commit your work* | Copies the text |
 | A web page | *Save what you learn from "…" to your notes* | Copies the text |
 
-- **Click Pette** (or `Ctrl+Shift+Space`) to have SOMA look at the screen right now; otherwise it checks every couple of seconds and stays quiet most of the time (45 s between cards, no repeats for 5 minutes).
+- A web page can't see which app is in front, so SOMA infers it (editor, terminal, browser) from the shared window's title and on-screen text.
+- **Click Pette** (or `Ctrl+Shift+Space`) to have SOMA look now; otherwise it checks every 2 s and stays quiet most of the time (45 s between cards, no repeats for 5 minutes).
 - A card stays 15 s (a bar drains under it). Ignoring it is not a *Not now*.
-- **Learning:** every answer goes back to SOMA's online ranker. Pette also mutes a kind of suggestion you answer *Not now* to at least 80 % of the time (after 4 answers). The world-model panel shows why.
-- **Opening never runs anything:** VS Code (`code -g file:line`) when its CLI is on PATH, images in their viewer, anything else is only selected in Explorer.
+- **Learning:** every answer goes to SOMA's online ranker (kept in IndexedDB). Pette also mutes a kind of suggestion you answer *Not now* to at least 80 % of the time (after 4 answers). The world-model panel shows why.
+- **Opening never runs anything:** files open read-only in Pette's own viewer (text with the line highlighted, images inline, anything else as a download).
 
-### The camera orb
-A circle above Pette shows **you** (a mirrored webcam preview, processed and drawn locally only), your hand skeleton, and a status ring: blue *Looking*, amber *Suggestion*, green *Done ✓*, grey *Not now*, violet *Indexing*, red *SOMA offline*.
+### Pette, the camera orb
+The orb shows **you** (a mirrored webcam preview, drawn locally only), your hand skeleton, the gesture it sees, and a status ring: blue *Looking*, amber *Suggestion*, green *Done ✓*, grey *Not now*, violet *Indexing*, red *SOMA offline*. Click it to look now; drag it to move her. She dozes (*zZ*) while you're away or paused, and a lid comes down when your eyes close. The camera is optional and off until you turn it on.
 
-| Webcam signal | Effect |
+### Gestures (TF.js hand and face landmarks)
+| Gesture | Effect |
 |---|---|
-| **Pinch** while a card is up | Same as **Open** / **Copy** |
-| **Away → back** | Pette dozes while you're away; an open card is re-titled *"While you were away · …"* |
-| **Eyes closed** | Pette closes her eyes too |
+| **Pinch** (thumb to index), held still ~0.5 s, a card is up | Same as **Open** / **Copy** |
+| **Point left / right** | Previous / next of your recent suggestions in the bubble |
+| **Pinch and drag** up / down | Scrolls the world-model panel, touch-style |
+| **Away → back** | An open card is re-titled *"While you were away · …"* |
+| **Eyes closed** | Pette shuts her eyes too |
 
-The camera is on by default. `--no-camera` or the tray turns it off, Pause releases it. Frames are never stored, logged or uploaded.
+A web page can't switch your browser tabs or scroll other apps, so gestures act inside Pette. Frames are never stored, logged or uploaded; the fact log gets gesture names and timings only.
+
+### Hotkeys (while Pette's page or floating window has focus)
+| Keys | Action |
+|---|---|
+| Ctrl+Shift+Space | Look at my screen now (same as clicking Pette) |
+| Ctrl+Alt+S | SOMA suggestions on / off |
+| Ctrl+Alt+B | Speech bubble on / off |
+| Ctrl+Alt+C | Hide / show the camera picture in the orb (gestures still work) |
+| Ctrl+Alt+W | Hide / show the world-model panel |
 
 ### The world-model panel
-Docked beside Pette: live status, suggestions shown / done / not now per kind (and which are muted), the folders SOMA indexed, the explainable rules in effect, presence over the last 24 hours, and recent kinds + outcomes. Facts only: never the suggestion text, file names or screen content.
-
-### Hotkeys
-| Keys | Action | Setting |
-|---|---|---|
-| Ctrl+Shift+Space | Look at my screen now (same as clicking Pette) | `FLOWSTATE_HOTKEY` |
-| Ctrl+Alt+S | SOMA suggestions on / off (off = SOMA stops capturing) | `PETTE_SOMA_HOTKEY` |
-| Ctrl+Alt+C | Hide / show the camera orb (pinch still works) | `PETTE_CAMERA_HOTKEY` |
-| Ctrl+Alt+W | Hide / show the world-model panel | `PETTE_WORLD_HOTKEY` |
-
-## Configuration
-
-| Variable | Purpose |
-|---|---|
-| `PETTE_SOMA_ENDPOINT` | SOMA endpoint file (`{url, token}`), written by `SOMA/scripts/serve.py`; the launcher sets it. |
-| `SOMA_CONFIG`, `SOMA_CHECKPOINT`, `SOMA_INTERVAL`, `SOMA_SYNTHETIC` | Launcher: SOMA config (default `configs/pette.yaml`), model checkpoint, seconds between steps, synthetic screens. |
-| `FLOWSTATE_SHOW_IN` | With `--focus-only`: comma-separated process names where Pette appears. |
-| `FLOWSTATE_DB` | Pette's fact log, default `db/pette_cache.sqlite3`. |
-| Hotkeys | See the table above. |
-
-`SOMA/configs/pette.yaml` lets SOMA's top-ranked candidate through. SOMA's default config wants 55 % confidence, which its untrained model never reaches (about 30 % per option), so it stayed silent on real screens; the cooldown and duplicate window keep cards rare instead.
+Live status, suggestions shown / done / not now per kind (and which are muted), the folders SOMA indexed, the explainable rules in effect, presence over the last 24 hours, and recent kinds + outcomes. Facts only: never the suggestion text, file names or screen content.
 
 ## Architecture
 
-| Part | File | What it does |
+| Part | Path | What it does |
 |---|---|---|
-| Hub | `pet/soma.py` | `SomaClient` (localhost-only, token) and `Suggester`: polls SOMA, shows cards when Pette is free, look-now, folder add/remove, feedback, muting, capture exclusion. |
-| Do it | `pet/actions.py` | Open a file safely or copy text. Nothing else. |
-| Overlay | `pet/ui.py`, `pet/sprites.py` | Pette, the camera orb, the frosted-glass bubble with the card's time-left bar. |
-| Webcam | `pet/vision.py`, `pet/watcher.py` | MediaPipe face and hand tracking: presence, eyes closed, pinch, the orb preview. |
-| World model | `db/`, `pet/worldview.py`, `web/` | SQLite fact log → explainable rules → the React/shadcn panel. |
-| Focus gate | `pet/focus.py` | Optional (`--focus-only`): show Pette only over VS Code and terminals. |
-| Hotkeys | `pet/hotkeys.py` | Global hotkeys that only emit Qt signals. |
-| SOMA | `SOMA/` | The backend: capture, OCR, memory, PyTorch model, safety gate, local API (`scripts/serve.py`). |
+| Contracts | `src/soma/service.ts`, `src/soma/types.ts`, `src/pette/contracts.ts` | `SomaService` (the old localhost API's verbs, now in-page), shared types |
+| SOMA capture | `src/soma/capture/` | `getDisplayMedia` (Pette's own tab excluded), change detection, app inference, exclusions, redaction |
+| SOMA perception | `src/soma/perception/` | tesseract.js OCR, screen parsing (errors, file refs, buttons), hashed tokenizer, featurization |
+| SOMA memory | `src/soma/memory/` | File System Access folder walk, summaries + hashed embeddings in IndexedDB, retrieval, forget-folder |
+| SOMA model | `src/soma/models/` | TF.js: ViT visual encoder, text-layout encoder, screen fusion, GRU temporal encoder, memory fusion, action policy (index 0 = stay silent) |
+| SOMA learning | `src/soma/learning/` | Online preference ranker from accept / not-now feedback, feedback snapshots (no pixels) |
+| SOMA policy | `src/soma/policy/` | Candidate generator, app-context templates, candidate encoder, safety gate (threshold, cooldown, duplicates, quiet apps) |
+| SOMA runtime | `src/soma/runtime/`, `src/soma/index.ts` | One step per tick, scheduler, `createSoma()` |
+| Hub | `src/pette/suggester.ts` | Polls SOMA, shows cards when Pette is free, look-now, folders, feedback, muting |
+| Do it | `src/pette/actions.ts` | Show a file from your folders or copy text. Nothing else. |
+| UI | `src/pette/ui/`, `src/pette/controller.ts`, `src/components/` | Orb, speech bubble, file viewer, settings, world panel, floating window |
+| Webcam | `src/pette/vision/` | TF.js hand-pose and face-landmarks, debounce policy, watcher |
+| World model | `src/pette/world/` | IndexedDB fact log → explainable rules |
+| Sandbox | `src/pette/fakeSoma.ts`, `src/pette/Sandbox.tsx` | `?sandbox`: the real UI around a scripted fake SOMA, with a manual test checklist |
 
 ### Safety rules
-- **Nothing runs by itself.** SOMA only suggests; Pette acts only on Open / Copy / pinch, and opening never executes a file.
-- **Screen capture is opt-in** (the launcher), pausable (tray, `Ctrl+Alt+S`), skips password managers, private windows and sign-in prompts, and keeps screenshots in memory only. Pette's own windows are excluded from capture.
-- **Your files:** SOMA indexes only folders you pick, never a whole home directory or drive; removing a folder forgets everything from it. Suggestions only point at files inside those folders.
-- **Pette's db stores facts only:** event names, timings, and which kind of suggestion you answered how ([db/README.md](db/README.md)).
-- Nothing leaves your machine: SOMA's API binds to 127.0.0.1 with a per-start token.
-
-## Development
-
-```bash
-.venv/Scripts/python.exe -m pytest -q                 # Pette (Qt offscreen; fake SOMA)
-cd SOMA && .venv/Scripts/python.exe -m pytest -q      # SOMA
-.venv/Scripts/python.exe tools/run_checks.py          # both suites + SOMA service + UI states -> test_results/
-.venv/Scripts/python.exe tools/sandbox.py             # the real app + a panel driving a scripted fake SOMA
-.venv/Scripts/python.exe tools/get_models.py          # MediaPipe models (the launcher does this)
-cd web && npm ci && npm run build                     # rebuild pet/web/index.html after editing the panel
-```
-
-### Manual testing sandbox
-`tools/sandbox.py` runs the real app next to a control panel around a **fake SOMA** (same API, scripted): queue an open-file, your-files or copy-only card, make *look now* find nothing, stop SOMA to see the offline state, simulate webcam events, and watch every request Pette makes. `--real-soma <endpoint file>` points it at the real service. A checklist saves to `test_results/MANUAL_TEST.md`.
+- **Nothing runs by itself.** SOMA only suggests; Pette acts only on Open / Copy / pinch, and opening only displays a file.
+- **Screen capture is opt-in** (the browser's share picker), pausable, skips password managers, private windows and sign-in prompts, and keeps frames in memory only.
+- **Your files:** SOMA reads only folders you pick; removing a folder forgets everything from it. Suggestions only point at files inside those folders.
+- **Untrusted text:** screen text, file contents and suggestion text are displayed as text or copied, never executed and never turned into commands or URLs.
+- **Pette's fact log stores facts only:** event names, timings, and which kind of suggestion you answered how.
 
 ## Status
-- Pette ↔ SOMA verified live on this machine: SOMA serving real-screen suggestions, Pette showing them as cards.
-- SOMA's model is trained on synthetic data only; suggestion quality on real screens needs consented real sessions (see [SOMA/README.md](SOMA/README.md)).
-- Test results: [test_results/REPORT.md](test_results/REPORT.md).
+- SOMA's model is untrained in the browser (seeded weights); the ranker learns from your answers. Suggestion quality on real screens needs training on consented real sessions.
+- The Python / PySide6 / PyTorch version lives in git history before this branch.

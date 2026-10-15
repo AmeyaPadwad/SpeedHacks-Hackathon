@@ -1,0 +1,48 @@
+{
+  "name": "pette",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Pette, the on-screen face of SOMA: a webcam orb that shows next-step suggestions ranked by an in-browser TensorFlow.js model.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.1.0",
+    "@mediapipe/face_mesh": "0.4.1633559619",
+    "@mediapipe/hands": "0.4.1675469240",
+    "@tensorflow-models/face-landmarks-detection": "1.0.6",
+    "@tensorflow-models/hand-pose-detection": "2.0.1",
+    "@tensorflow/tfjs": "4.22.0",
+    "class-variance-authority": "0.7.0",
+    "clsx": "2.1.1",
+    "framer-motion": "11.11.17",
+    "idb": "8.0.0",
+    "lucide-react": "0.460.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tailwind-merge": "2.5.4",
+    "tesseract.js": "5.1.1"
+  },
+  "devDependencies": {
+    "@testing-library/react": "16.0.1",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@types/wicg-file-system-access": "2023.10.5",
+    "@vitejs/plugin-react": "4.3.3",
+    "autoprefixer": "10.4.20",
+    "fake-indexeddb": "6.0.0",
+    "jsdom": "25.0.1",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.15",
+    "tailwindcss-animate": "1.0.7",
+    "typescript": "5.6.3",
+    "vite": "5.4.11",
+    "vitest": "2.1.8"
+  }
+}
