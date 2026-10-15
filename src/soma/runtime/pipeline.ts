@@ -23,6 +23,7 @@ import { inferWindow, isExcluded } from "../capture/window";
 import type { SomaConfig } from "../config";
 import { FeedbackBook, type FeedbackSnapshot } from "../learning/feedback";
 import { applyBias } from "../learning/preferenceRanker";
+import { isAuthorizedRef } from "../memory/access";
 import { ScreenHistory } from "../models/history";
 import { appBucket, imageToPixels, observationToArrays } from "../perception/featurize";
 import { parseScreen } from "../perception/screenParser";
@@ -44,7 +45,7 @@ import {
   type WindowInfo,
 } from "../types";
 import type { CapturerLike, EmbedderLike, ModelLike, OcrEngine, RankerLike, RetrieverLike } from "./deps";
-import { FileRefIndex, splitRef } from "./files";
+import { FileRefIndex } from "./files";
 
 // Skip reasons (`StepResult.skippedReason`); capture adds its own ("rate-limited", "grab-error:<type>").
 export const SKIP_PAUSED = "paused";
@@ -214,8 +215,7 @@ export class SomaRuntime {
 
   /** File ACL: a well-formed `folderId/relative/path` inside a folder the user picked. */
   authorizedFile(ref: string): boolean {
-    const parts = typeof ref === "string" ? splitRef(ref) : null;
-    return parts !== null && this.allowed.has(parts[0]);
+    return isAuthorizedRef(ref, this.allowed);
   }
 
   /** True while the last shown suggestion still matches `currentVersion` and has had no feedback. */
