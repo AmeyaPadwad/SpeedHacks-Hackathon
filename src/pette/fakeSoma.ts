@@ -84,7 +84,7 @@ export class FakeSoma implements SomaService {
   }
 
   async status(): Promise<SomaStatus> {
-    this.record("status");
+    if (this.offline) throw new Error("SOMA isn't running."); // a read: not logged
     return { paused: this.paused, capturing: this.capturing, steps: 0, processed: 0, frameVersion: 0, lastSkipReason: null,
       memories: this.folderList.reduce((a, f) => a + f.memories, 0), ready: true };
   }
