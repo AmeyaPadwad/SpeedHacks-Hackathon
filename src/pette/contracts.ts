@@ -40,3 +40,32 @@ export interface Proposal {
 
 /** Fact-log outcomes for a card. "ignored" (expired, paused, toggled off) is never a dismissal. */
 export type Outcome = "accepted" | "rejected" | "ignored";
+
+/**
+ * Pette's fact log (port of db/store.py): facts only, never suggestion text, file names or screen content.
+ * Implemented over IndexedDB in `pette/world/store.ts`; `null`-able everywhere it is injected.
+ */
+export interface FactLog {
+  logEvent(kind: string, duration?: number | null): void;
+  logOffer(kind: string, outcome: Outcome): void;
+  logBlinkBaseline(mean: number, p95: number, samples: number): void;
+}
+
+/**
+ * What the webcam watcher drives (implemented by Pette's controller). A web page cannot switch the
+ * user's browser tabs or scroll other apps, so the gestures act inside Pette:
+ *   point left / right -> `step(-1 | +1)`: previous / next of the recent suggestions in the bubble;
+ *   pinch-and-drag     -> `scroll(dy)`: scrolls Pette's world panel touch-style;
+ *   pinch (held still) -> `pinch()`: "Do it" on the card that is up, otherwise ignored.
+ */
+export interface WatcherTarget {
+  readonly paused: boolean;
+  pinch(): void;
+  /** Away -> back: an open card is re-titled "While you were away · …". */
+  nudge(): void;
+  setPresence(away: boolean, eyesClosed: boolean): void;
+  setFrame(frame: PreviewFrame): void;
+  step(direction: -1 | 1): void;
+  /** Image heights moved since the last call, + = hand moved down. */
+  scroll(dy: number): void;
+}
