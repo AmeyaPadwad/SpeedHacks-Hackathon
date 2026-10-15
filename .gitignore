@@ -9,3 +9,6 @@ db/*.sqlite3
 db/*.sqlite3-*
 web/node_modules/
 web/*.tsbuildinfo
+node_modules/
+dist/
+*.tsbuildinfo
