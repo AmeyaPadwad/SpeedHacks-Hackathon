@@ -57,6 +57,8 @@ export interface PetteState {
   cameraOn: boolean;
   /** Ctrl+Alt+C: hide the camera picture, keep Pette (ring, moods, clicks). */
   feedVisible: boolean;
+  /** Webcam gestures (pinch, point, pinch-and-drag) on or off; presence still works when off. */
+  gesturesEnabled: boolean;
   gesture: string;
   worldVisible: boolean;
   bubble: BubbleView | null;
@@ -85,7 +87,7 @@ export class PetteController implements WatcherTarget {
   readonly events = new Emitter<ControllerEvents>();
   private state: PetteState = {
     status: "idle", detail: "", mood: "idle", paused: false, bubbleEnabled: true, contextAllowed: true,
-    away: false, eyesClosed: false, cameraOn: false, feedVisible: true, gesture: "", worldVisible: true,
+    away: false, eyesClosed: false, cameraOn: false, feedVisible: true, gesturesEnabled: true, gesture: "", worldVisible: true,
     bubble: null, progress: null, notice: null, file: null,
   };
   private listeners = new Set<() => void>();
@@ -201,7 +203,7 @@ export class PetteController implements WatcherTarget {
   // --- WatcherTarget ------------------------------------------------------
   /** Pinch on a card = "Do it". Otherwise ignored (also while paging through history). */
   pinch(): void {
-    if (this.state.paused || !this.state.contextAllowed || this.view !== null) return;
+    if (!this.state.gesturesEnabled || this.state.paused || !this.state.contextAllowed || this.view !== null) return;
     if (this.live) this.events.emit("pinchOnProposal", this.live.id);
   }
 
@@ -231,6 +233,11 @@ export class PetteController implements WatcherTarget {
 
   /** Point left / right: page through the recent suggestions (read-only, "2 / 5"). */
   step(direction: -1 | 1): void {
+    if (this.state.gesturesEnabled) this.page(direction);
+  }
+
+  /** Page through the recent suggestions (the bubble's arrows and the pointing gesture). */
+  page(direction: -1 | 1): void {
     if (this.state.paused || !this.state.bubbleEnabled || !this.history.length) return;
     const n = this.history.length;
     const liveIndex = this.live ? this.history.findIndex((h) => h.id === this.live!.id) : -1;
@@ -252,7 +259,7 @@ export class PetteController implements WatcherTarget {
 
   /** Pinch-and-drag: scrolls Pette's world panel touch-style. */
   scroll(dy: number): void {
-    if (this.state.paused) return;
+    if (!this.state.gesturesEnabled || this.state.paused) return;
     this.events.emit("scroll", dy);
   }
 
@@ -279,6 +286,10 @@ export class PetteController implements WatcherTarget {
   /** Hide or show the camera picture inside the orb; the camera itself keeps running. */
   setCameraVisible(visible: boolean): void {
     if (visible !== this.state.feedVisible) this.set({ feedVisible: visible });
+  }
+
+  setGesturesEnabled(on: boolean): void {
+    this.set({ gesturesEnabled: on });
   }
 
   toggleCameraView(): void {
