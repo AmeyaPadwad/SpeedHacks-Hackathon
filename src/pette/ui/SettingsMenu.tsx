@@ -1,6 +1,6 @@
 /**
  * Settings (replaces the desktop tray menu): screen sharing, pause, suggestions, speech bubble, camera and its
- * picture, gestures, folders (add / remove with memory counts), the floating window, the world panel, and
+ * picture, gestures, folders (add / remove with memory counts), the floating window, the dashboard, and
  * Pette's own memory. Folder names and counts only; never paths or file names.
  */
 import { AnimatePresence, motion } from "framer-motion";
@@ -23,7 +23,6 @@ export interface SettingsState {
   gestures: boolean;
   floating: boolean;
   floatSupported: boolean;
-  world: boolean;
   remember: boolean;
   folders: FolderInfo[];
 }
@@ -41,7 +40,8 @@ export interface SettingsActions {
   onAddFolder: () => void;
   onRemoveFolder: (id: string) => void;
   onFloat: (on: boolean) => void;
-  onWorld: (on: boolean) => void;
+  /** Open the /debug dashboard in its own tab. */
+  onDashboard: () => void;
   onRemember: (on: boolean) => void;
   onClearMemory: () => void;
 }
@@ -135,9 +135,11 @@ export function SettingsMenu(props: SettingsState & SettingsActions & { classNam
             ) : <p className="text-[11px] text-muted-foreground">None yet: add a folder so suggestions can point at your files.</p>}
             <Separator className="my-2" />
 
-            <Row label="Float Pette over other apps" hint={props.floatSupported ? "Picture-in-Picture window" : "Needs Chrome or Edge"}
+            <Row label="Float Pette over other apps" hint={props.floatSupported ? "Stays on top of every tab and app, on any monitor" : "Needs Chrome, Edge or Comet"}
               checked={props.floating} onChange={props.onFloat} disabled={!props.floatSupported} />
-            <Row label="World panel" hint={comboLabel(HOTKEYS.world)} checked={props.world} onChange={props.onWorld} />
+            <Button variant="ghost" size="sm" className="mt-1 w-full justify-start" onClick={() => { props.onDashboard(); setOpen(false); }}>
+              Open the dashboard <span className="ml-auto text-[11px] text-muted-foreground">{comboLabel(HOTKEYS.world)}</span>
+            </Button>
             <Row label="Remember my patterns" hint="Facts only: kinds and outcomes, event names" checked={props.remember} onChange={props.onRemember} />
             <Button variant="ghost" size="sm" className="mt-1 w-full justify-start text-destructive" onClick={props.onClearMemory}>
               <Trash2 className="h-4 w-4" /> Clear Pette's memory
