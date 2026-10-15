@@ -54,10 +54,10 @@ export class FileRefIndex {
     let bestScore = 0;
     let tie = false;
     for (const { ref, rel } of list) {
+      // score = trailing path components in common
       let score = 0;
-      if (p === rel) score = rel.length + 1;
-      else if (p.endsWith("/" + rel)) score = rel.length;
-      else if (rel.endsWith("/" + p)) score = p.length;
+      if (p === rel || p.endsWith("/" + rel)) score = rel.split("/").length;
+      else if (rel.endsWith("/" + p)) score = p.split("/").length;
       if (score === 0) continue;
       if (score > bestScore) {
         best = ref;
