@@ -17,8 +17,9 @@ export interface FirstRunProps {
 
 export function FirstRun({ screenShared, cameraOn, onShareScreen, onCamera, onContinue }: FirstRunProps) {
   return (
-    <div className="relative flex min-h-full items-center justify-center overflow-y-auto bg-zinc-950 p-4">
+    <div className="relative h-full overflow-y-auto overflow-x-hidden bg-zinc-950">
       <Spotlight className="-left-10 -top-24" fill="#a78bfa" />
+      <div className="flex min-h-full items-center justify-center p-4">
       <Card className="relative z-10 w-full max-w-lg rounded-2xl shadow-2xl">
         <CardHeader className="p-6 pb-3">
           <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Pette · SOMA</div>
@@ -52,6 +53,7 @@ export function FirstRun({ screenShared, cameraOn, onShareScreen, onCamera, onCo
           </button>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
