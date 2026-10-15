@@ -117,6 +117,7 @@ export class CameraWorker {
   onScroll: (dy: number) => void = () => {};
   /** Open-eye blink summary every ~30 s, for the world model. */
   onBaseline: (summary: BaselineSummary) => void = () => {};
+  /** Something went wrong; the camera is already released when this is called. */
   onError: (message: string) => void = () => {};
   /** Human-readable camera status ("Camera on (processed locally)", "Camera off"). */
   onStatus: (message: string) => void = () => {};
@@ -173,12 +174,12 @@ export class CameraWorker {
       this.video = video;
       for (const track of stream.getVideoTracks()) {
         track.addEventListener("ended", () => {
-          if (gen === this.generation) { this.onError("Camera disconnected."); this.stop(); }
+          if (gen === this.generation) { this.stop(); this.onError("Camera disconnected."); }
         });
       }
       await video.play();
     } catch {
-      if (gen === this.generation) { this.onError("Camera unavailable: could not start the models."); this.stop(); }
+      if (gen === this.generation) { this.stop(); this.onError("Camera unavailable: could not start the models."); }
       return;
     }
     if (gen !== this.generation) return;
@@ -253,7 +254,7 @@ export class CameraWorker {
       if (gen !== this.generation) { bitmap?.close(); return; }
       this.onFrame({ bitmap, hands: lm ? [previewPoints(lm, w, h)] : [], gesture: gestureName(lm) });
     } catch {
-      if (gen === this.generation) { this.onError("Camera stopped: the models failed on a frame."); this.stop(); }
+      if (gen === this.generation) { this.stop(); this.onError("Camera stopped: the models failed on a frame."); }
     } finally {
       this.busy = false;
       if (gen !== this.generation && !this.stream) this.disposeDetectors();
