@@ -1,7 +1,0 @@
-PySide6==6.8.3
-requests>=2.31
-keyboard>=0.13.5
-python-dotenv>=1.0
-numpy
-opencv-contrib-python>=4.11
-mediapipe>=0.10.21
