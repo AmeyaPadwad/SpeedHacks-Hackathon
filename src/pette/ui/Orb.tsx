@@ -190,7 +190,11 @@ export function Orb({ controller, status, detail, mood, cameraOn, feedVisible, g
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {
+      // no active pointer (synthetic or already released): clicking still works, dragging just isn't captured
+    }
     press.current = { dx: e.clientX - (position?.x ?? 0), dy: e.clientY - (position?.y ?? 0), x0: e.clientX, y0: e.clientY, moved: false };
   };
   const onPointerMove = (e: React.PointerEvent) => {
