@@ -1,14 +1,14 @@
-.venv/
-__pycache__/
-.env
-*.log
-dist/
-build/
-models/*.task
-db/*.sqlite3
-db/*.sqlite3-*
-web/node_modules/
-web/*.tsbuildinfo
+# Pette web app
 node_modules/
 dist/
 *.tsbuildinfo
+*.log
+.env
+
+# leftovers from the Python version (local only)
+.venv/
+__pycache__/
+.pytest_cache/
+models/
+db/
+SOMA/
