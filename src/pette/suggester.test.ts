@@ -304,3 +304,21 @@ it("kindOf and opener", () => {
   expect(opener(sug("x", { file: "a.py", line: "3" as unknown as number }) as SuggestionPayload)).toEqual(["a.py", null]);
   expect(opener(sug("x", { memorySource: "n.md" }) as SuggestionPayload)).toEqual(["n.md", null]);
 });
+
+it("a stop / start while a poll is in flight leaves one poll loop", async () => {
+  const r = rig();
+  let polls = 0;
+  const original = r.soma.suggestion.bind(r.soma);
+  r.soma.suggestion = () => {
+    polls++;
+    return original();
+  };
+  r.s.start();
+  r.s.stop();
+  r.s.start();
+  await settle();
+  polls = 0;
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(polls).toBe(3);
+  r.s.stop();
+});

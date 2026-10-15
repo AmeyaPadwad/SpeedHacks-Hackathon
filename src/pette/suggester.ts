@@ -94,6 +94,7 @@ export class Suggester {
   private failures = 0;
   private left = 0;
   private running = false;
+  private generation = 0;
   private polling = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private tick: ReturnType<typeof setInterval> | null = null;
@@ -142,10 +143,12 @@ export class Suggester {
   start(): void {
     if (this.running) return;
     this.running = true;
+    const generation = ++this.generation; // a stop/start while a poll is in flight must not leave two loops
+    const live = () => this.running && this.generation === generation;
     const loop = async () => {
-      if (!this.running) return;
+      if (!live()) return;
       await this.pollOnce();
-      if (this.running) this.pollTimer = setTimeout(loop, this.pollMs);
+      if (live()) this.pollTimer = setTimeout(loop, this.pollMs);
     };
     void loop();
     this.refreshFolders();
