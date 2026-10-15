@@ -127,7 +127,7 @@ export class FakeSoma implements SomaService {
     return gone.reduce((a, f) => a + f.memories, 0);
   }
 
-  async readFile(ref: string) {
+  async readFile(ref: string): ReturnType<SomaService["readFile"]> {
     this.record("readFile", ref);
     const text = this.files[ref];
     if (text === undefined) return null;
