@@ -30,6 +30,8 @@ async function boot() {
   try {
     const store = sandbox ? new FactStore() : await FactStore.openOrMemory();
     const soma = sandbox ? new FakeSoma() : await loadSoma();
+    // ?debug exposes the service for inspection from DevTools (status, suggestion); nothing else changes.
+    if (new URLSearchParams(window.location.search).has("debug")) (window as unknown as { __soma: unknown }).__soma = soma;
     root.render(
       <React.StrictMode>
         <App soma={soma} store={store} sandbox={sandbox} />
