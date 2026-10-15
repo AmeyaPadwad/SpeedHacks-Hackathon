@@ -9,7 +9,13 @@ export default defineConfig({
   base: "./",
   plugins: [react()],
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
-  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 4000 },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 4000,
+    // debug.html is the /debug dashboard as its own page, so static hosts serve it without a rewrite rule.
+    rollupOptions: { input: { main: path.resolve(__dirname, "index.html"), debug: path.resolve(__dirname, "debug.html") } },
+  },
   test: {
     globals: true,
     environment: "jsdom",

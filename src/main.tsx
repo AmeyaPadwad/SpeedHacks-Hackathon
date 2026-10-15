@@ -1,5 +1,6 @@
 /**
- * Entry point. `?sandbox` runs the real app around a scripted fake SOMA with an in-memory fact log (like
+ * Entry point. `/debug` (or `?debug`) is the dashboard: every Pette + SOMA stat, live from the Pette tab.
+ * `?sandbox` runs the real app around a scripted fake SOMA with an in-memory fact log (like
  * tools/sandbox.py's temp db); otherwise SOMA (tfjs + OCR) loads lazily and the fact log lives in IndexedDB.
  */
 import React from "react";
@@ -12,7 +13,9 @@ import { loadSoma } from "./pette/loadSoma";
 import { FactStore } from "./pette/world/store";
 
 const root = ReactDOM.createRoot(document.getElementById("root")!);
-const sandbox = new URLSearchParams(window.location.search).has("sandbox");
+const params = new URLSearchParams(window.location.search);
+const sandbox = params.has("sandbox");
+const dashboard = /\/debug(\.html)?\/?$/.test(window.location.pathname) || params.has("debug");
 
 function Message({ title, text }: { title: string; text: string }) {
   return (
@@ -30,8 +33,8 @@ async function boot() {
   try {
     const store = sandbox ? new FactStore() : await FactStore.openOrMemory();
     const soma = sandbox ? new FakeSoma() : await loadSoma();
-    // ?debug exposes the service for inspection from DevTools (status, suggestion); nothing else changes.
-    if (new URLSearchParams(window.location.search).has("debug")) (window as unknown as { __soma: unknown }).__soma = soma;
+    // Dev builds expose the service for DevTools checks (status, suggestion, diagnostics).
+    if (import.meta.env.DEV) (window as unknown as { __soma: unknown }).__soma = soma;
     root.render(
       <React.StrictMode>
         <App soma={soma} store={store} sandbox={sandbox} />
@@ -43,4 +46,8 @@ async function boot() {
   }
 }
 
-void boot();
+if (dashboard) {
+  void import("./pette/dashboard/Dashboard").then(({ Dashboard }) => root.render(<React.StrictMode><Dashboard /></React.StrictMode>));
+} else {
+  void boot();
+}
