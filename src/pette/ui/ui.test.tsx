@@ -129,7 +129,8 @@ it("the app in sandbox mode: first run, then a SOMA card in the bubble, Not now 
   fireEvent.click(screen.getByText("Share a screen"));
   await waitFor(() => expect(screen.getByText("Ready · SOMA")).toBeTruthy());
   expect(soma.calls("grantScreen")).toHaveLength(1);
-  expect(screen.getByTestId("world-panel")).toBeTruthy();
+  expect(screen.queryByTestId("world-panel")).toBeNull(); // the world model lives on the /debug dashboard
+  expect(screen.getByRole("button", { name: /Dashboard/ })).toBeTruthy();
   const id = soma.queue(SAMPLES["Review changes"]);
   await waitFor(() => expect(screen.getByText('Review your changes to "calc.py" before you commit')).toBeTruthy(), { timeout: 3000 });
   await act(async () => {

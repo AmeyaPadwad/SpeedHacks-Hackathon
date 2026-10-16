@@ -85,6 +85,13 @@ const NON_TITLE_LABEL = /^(?:screen|window|web-contents-media-stream)[:/]|^(?:en
 const MENU_WORDS = new Set(["file", "edit", "selection", "view", "go", "run", "terminal", "help"]);
 const EDITOR_CUES: RegExp[] = [/\bLn \d+,\s*Col \d+/, /^EXPLORER\b/, /\bPROBLEMS\b.*\bOUTPUT\b|\bDEBUG CONSOLE\b/,
   /\bSpaces: \d+\b|\bUTF-8\b|\bCRLF\b/];
+// Modern VS Code hides its menu bar and OCR drops dots and glyphs, so also look for the shape of an editor:
+// a breadcrumb trail, the Explorer header, and many line-numbered code lines.
+const BREADCRUMB = /(?:\S+\s+>\s+){2,}/;
+const EXPLORER = /^\W{0,6}explorer\b/i;
+const NUMBERED_CODE = /^\W{0,3}\d{1,4}\s+\S/;
+const CODE_TOKENS = /\b(?:def|class|import|from|return|function|const|let|self|async|await|interface)\b|=>|\)\s*[:{]\s*$/;
+const FILE_NAME = /[\w-]+\.(?:py|tsx?|jsx?|mjs|json|md|ya?ml|toml|html|css|java|cs|go|rs|rb|cpp|c|h|sh)\b/i;
 const PROMPTS: RegExp[] = [
   /^PS [A-Za-z]:\\/, /^[A-Za-z]:\\[^<>|]*>/, /^[\w.-]+@[\w.-]+[:\s].*[$#]\s?/, /^\$\s/, /^>>>\s?/,
   /^Microsoft Windows \[Version/, /^Windows PowerShell\b/, /^Copyright \(C\) Microsoft Corporation/,
@@ -106,6 +113,15 @@ export function appFromTitle(title: string): string {
 }
 
 const isTop = (e: OCRElement, limit: number): boolean => e.bbox[1] < limit;
+
+/** A VS Code-style title ("main.py - Visual Studio Code") from a file name in the tab strip, else "". */
+function editorTitle(top: OCRElement[]): string {
+  for (const e of top) {
+    const m = FILE_NAME.exec(e.text);
+    if (m) return `${m[0]} - Visual Studio Code`;
+  }
+  return "";
+}
 
 /**
  * Guess the shared window's app and title.
@@ -148,13 +164,20 @@ export function inferWindow(surface: string, trackLabel: string, elements: OCREl
   const menu = new Set<string>();
   for (const e of top) for (const w of e.text.split(/\s+/)) if (MENU_WORDS.has(w.toLowerCase())) menu.add(w.toLowerCase());
   if (menu.size >= 4) editor += 3;
+  let numbered = 0;
+  let code = 0;
   for (const e of elements) {
     const t = e.text.trim();
     if (EDITOR_CUES.some((re) => re.test(t))) editor += 1;
+    if (isTop(e, 0.15) && BREADCRUMB.test(t)) editor += 2;
+    if (EXPLORER.test(t)) editor += 1;
+    if (NUMBERED_CODE.test(t)) numbered += 1;
+    if (CODE_TOKENS.test(t)) code += 1;
     if (PROMPTS.some((re) => re.test(t))) terminal += 2;
     if (isTop(e, 0.15) && ADDRESS.test(t)) browser += 3;
   }
-  if (editor >= 3) return make("code", labelTitle);
+  if (numbered >= 5 && code >= 3) editor += 2;
+  if (editor >= 3) return make("code", labelTitle || editorTitle(top));
   if (terminal >= 2 && terminal >= browser) return make("windowsterminal", labelTitle);
   if (browser >= 3 || surface === "browser") return make(hostBrowser(userAgent), labelTitle);
   return make("", labelTitle);

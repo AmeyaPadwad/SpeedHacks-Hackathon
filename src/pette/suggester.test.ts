@@ -322,3 +322,13 @@ it("a stop / start while a poll is in flight leaves one poll loop", async () => 
   expect(polls).toBe(3);
   r.s.stop();
 });
+it("a card expires on wall-clock time even when a hidden tab delays the ticks", async () => {
+  const r = rig();
+  await r.deliver(sug("s1"));
+  expect(r.ui.proposal).not.toBeNull();
+  vi.setSystemTime(Date.now() + 3000); // the clock moves past showS while no tick has run
+  vi.advanceTimersByTime(250);
+  await settle();
+  expect(r.ui.proposal).toBeNull();
+  expect(r.calls().at(-1)).toEqual(["feedback", "s1", "ignored"]);
+});

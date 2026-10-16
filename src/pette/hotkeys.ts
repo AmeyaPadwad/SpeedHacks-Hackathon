@@ -11,7 +11,7 @@ export const HOTKEYS: Record<HotkeyAction, string> = {
   suggestions: "ctrl+alt+s", // SOMA suggestions on / off
   bubble: "ctrl+alt+b", // speech bubble on / off
   camera: "ctrl+alt+c", // hide / show the camera picture
-  world: "ctrl+alt+w", // hide / show the world-model panel
+  world: "ctrl+alt+w", // open the dashboard (/debug)
 };
 
 export interface Combo { ctrl: boolean; alt: boolean; shift: boolean; meta: boolean; key: string }

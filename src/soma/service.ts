@@ -82,3 +82,33 @@ export interface SomaService {
   /** Read an authorized file (`folderId/relative/path`) for Pette's file viewer; null when not authorized. */
   readFile(ref: string): Promise<{ name: string; text: string | null; blob: Blob } | null>;
 }
+
+/**
+ * Pipeline internals for the debug dashboard. Facts and numbers only: no screen text, no file names; the
+ * candidates carry their action and template, never their text.
+ */
+export interface SomaDiagnostics {
+  /** Inferred foreground app ("code", "chrome", "" when unknown) and the shared surface. */
+  app: string;
+  surface: string;
+  /** OCR lines read on the last processed frame. */
+  ocrLines: number;
+  candidates: { action: string; template: string }[];
+  /** Label -> probability from the last decision (NO_SUGGESTION included). */
+  distribution: Record<string, number>;
+  /** Per-stage milliseconds of the last processed step. */
+  timingsMs: Record<string, number>;
+  /** How many steps ended for each skip reason ("unchanged", "pette-in-front", ...). */
+  skips: Record<string, number>;
+  /** Suggestions the gate let through since start. */
+  spoke: number;
+  /** tfjs backend and live tensors / bytes; null before the model loads. */
+  tf: { backend: string; tensors: number; bytes: number } | null;
+}
+
+export interface SomaServiceWithDiagnostics extends SomaService {
+  diagnostics(): Promise<SomaDiagnostics>;
+}
+
+export const hasDiagnostics = (s: SomaService): s is SomaServiceWithDiagnostics =>
+  typeof (s as Partial<SomaServiceWithDiagnostics>).diagnostics === "function";

@@ -9,6 +9,6 @@ dist/
 .venv/
 __pycache__/
 .pytest_cache/
-models/
-db/
-SOMA/
+/models/
+/db/
+/SOMA/

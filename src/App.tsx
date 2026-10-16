@@ -5,9 +5,8 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { PictureInPicture2 } from "lucide-react";
+import { LayoutDashboard, PictureInPicture2 } from "lucide-react";
 import type { SomaService } from "@/soma/service";
-import { WorldPanel } from "@/components/WorldPanel";
 import { Button } from "@/components/ui/button";
 import type { VisionEvent } from "@/pette/contracts";
 import { FakeSoma } from "@/pette/fakeSoma";
@@ -15,6 +14,7 @@ import { HOTKEYS, comboLabel, useHotkeys } from "@/pette/hotkeys";
 import { loadWatcher, type Watcher } from "@/pette/loadVision";
 import { usePip } from "@/pette/pip";
 import { Sandbox } from "@/pette/Sandbox";
+import { useDashboardPublisher } from "@/pette/dashboard/publisher";
 import { statusLabel } from "@/pette/status";
 import { FileViewer } from "@/pette/ui/FileViewer";
 import { FirstRun } from "@/pette/ui/FirstRun";
@@ -23,7 +23,7 @@ import { Notice } from "@/pette/ui/Notice";
 import { ORB_BOX, Orb } from "@/pette/ui/Orb";
 import { SettingsMenu } from "@/pette/ui/SettingsMenu";
 import { SpeechBubble } from "@/pette/ui/SpeechBubble";
-import { createPette, dockPanel, useOrbPosition, usePetteState, useSuggester, useWorldSnapshot } from "@/pette/usePette";
+import { createPette, useOrbPosition, usePetteState, useSuggester } from "@/pette/usePette";
 import type { FactStore } from "@/pette/world/store";
 
 export interface AppProps {
@@ -43,7 +43,6 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
   const { controller, suggester, world } = pette;
   const st = usePetteState(controller);
   const { enabled, folders } = useSuggester(suggester);
-  const snapshot = useWorldSnapshot(world, store, st.worldVisible);
   const [intro, setIntro] = useState(!skipIntro);
   const [screenShared, setScreenShared] = useState(false);
   const [remember, setRemember] = useState(store.enabled);
@@ -111,6 +110,42 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
     if (p) void setCamera(false);
   }), [controller, setCamera]);
 
+  // --- float -----------------------------------------------------------------
+  // A page can't draw over other tabs; the always-on-top Picture-in-Picture window can, on any monitor.
+  const setFloating = useCallback(async (on: boolean, quiet = false) => {
+    if (!on) return pip.close();
+    if (await pip.open()) return;
+    if (quiet) return;
+    controller.say(pip.supported
+      ? "Click “Float Pette over all tabs” to keep her with you."
+      : "This browser can't float Pette (try Chrome, Edge or Comet).", { title: "Pette", seconds: 6 });
+  }, [pip, controller]);
+
+  // Chromium opens the floating window by itself when you switch away from a tab that is capturing
+  // (automatic Picture-in-Picture), so Pette follows you to other tabs without a click.
+  const openPip = pip.open;
+  useEffect(() => {
+    const ms = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
+    if (!ms || !pip.supported) return;
+    try {
+      ms.setActionHandler("enterpictureinpicture" as MediaSessionAction, () => void openPip());
+    } catch {
+      return; // not supported here: the button still works
+    }
+    return () => {
+      try {
+        ms.setActionHandler("enterpictureinpicture" as MediaSessionAction, null);
+      } catch {
+        // ignore
+      }
+    };
+  }, [pip.supported, openPip]);
+
+  // --- dashboard ---------------------------------------------------------------
+  const openDashboard = useCallback(() => {
+    window.open(new URL("debug", window.location.href).href, "pette-dashboard", "noopener");
+  }, []);
+
   // --- screen ----------------------------------------------------------------
   const shareScreen = useCallback(async () => {
     let ok = false;
@@ -130,7 +165,8 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
     }
     setIntro(false);
     greet();
-  }, [soma, controller, greet]);
+    void setFloating(true, true); // still inside the click when the picker returns quickly; else the button
+  }, [soma, controller, greet, setFloating]);
 
   const stopSharing = useCallback(() => {
     soma.revokeScreen();
@@ -138,11 +174,12 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
     controller.say("Stopped sharing. SOMA isn't looking at anything now.", { title: "SOMA", seconds: 4 });
   }, [soma, controller]);
 
-  // --- float -----------------------------------------------------------------
-  const setFloating = useCallback(async (on: boolean) => {
-    if (!on) return pip.close();
-    if (!(await pip.open())) controller.say("This browser can't float Pette (try Chrome or Edge).", { title: "Pette", seconds: 6 });
-  }, [pip, controller]);
+  // --- dashboard feed (the /debug tab) ----------------------------------------
+  useDashboardPublisher(pette, {
+    status: st.status, label: statusLabel(st.status, st.detail), mood: st.mood, camera: st.cameraOn, gesture: st.gesture,
+    present: !st.away, eyesClosed: st.eyesClosed, paused: st.paused, suggestions: enabled, bubble: st.bubbleEnabled,
+    gestures: st.gesturesEnabled, screenShared, floating: !!pip.root, cardUp: controller.proposal !== null,
+  }, sandbox, controller);
 
   // --- hotkeys (in this tab and in the floating window) -----------------------
   useHotkeys({
@@ -150,10 +187,8 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
     suggestions: () => suggester.toggle(),
     bubble: () => controller.toggleBubble(),
     camera: () => controller.toggleCameraView(),
-    world: () => controller.toggleWorld(),
+    world: openDashboard,
   }, [window, pip.window]);
-
-  const onScrollGesture = useCallback((fn: (dy: number) => void) => controller.events.on("scroll", fn), [controller]);
 
   // Sandbox: simulated webcam events go through the real watcher (logging, presence, pinch, paging).
   const simulate = useCallback(async (ev: VisionEvent | { scroll: number }) => {
@@ -172,13 +207,13 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
     <SettingsMenu
       screenShared={screenShared} paused={st.paused} suggestions={enabled} bubble={st.bubbleEnabled} camera={st.cameraOn}
       cameraPicture={st.feedVisible} gestures={st.gesturesEnabled} floating={!!pip.root} floatSupported={pip.supported}
-      world={st.worldVisible} remember={remember} folders={folders}
+      remember={remember} folders={folders}
       onShareScreen={() => void shareScreen()} onStopSharing={stopSharing} onLook={() => controller.requestLook()}
       onPause={(p) => controller.setPaused(p)} onSuggestions={(on) => suggester.setEnabled(on)}
       onBubble={(on) => controller.setBubbleEnabled(on)} onCamera={(on) => void setCamera(on)}
       onCameraPicture={(on) => controller.setCameraVisible(on)} onGestures={(on) => controller.setGesturesEnabled(on)}
       onAddFolder={() => void suggester.addFolder()} onRemoveFolder={(id) => void suggester.removeFolder(id)}
-      onFloat={(on) => void setFloating(on)} onWorld={(on) => controller.setWorldVisible(on)}
+      onFloat={(on) => void setFloating(on)} onDashboard={openDashboard}
       onRemember={(on) => {
         store.enabled = on;
         setRemember(on);
@@ -191,7 +226,6 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
   );
 
   const fake = sandbox && soma instanceof FakeSoma ? soma : null;
-  const panel = dockPanel(orbPos);
   const orbRect = { x: orbPos.x, y: orbPos.y, width: ORB_BOX.width, height: ORB_BOX.height };
   let body: ReactNode;
   if (intro) {
@@ -202,17 +236,20 @@ export default function App({ soma, store, sandbox = false, skipIntro = false }:
       <>
         <div className="pointer-events-none fixed inset-x-0 top-6 mx-auto max-w-md px-4 text-center text-xs text-zinc-500">
           {screenShared
-            ? "SOMA is watching the screen you shared. Keep this tab open; float Pette to keep her on top of other apps."
+            ? "SOMA is watching the screen you shared. Keep this tab open; Pette floats over your other tabs and apps."
             : "No screen shared yet: open settings (top right) to share one."}
         </div>
+        <div className="fixed left-4 top-4 z-[56] flex gap-2">
+          {pip.supported && !pip.root && (
+            <Button size="sm" onClick={() => void setFloating(true)}>
+              <PictureInPicture2 className="h-4 w-4" /> Float Pette over all tabs
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={openDashboard}>
+            <LayoutDashboard className="h-4 w-4" /> Dashboard
+          </Button>
+        </div>
         <div className="fixed right-4 top-4 z-[56]">{settings}</div>
-        {st.worldVisible && (
-          <div className="fixed z-30" style={panel}>
-            <WorldPanel snapshot={snapshot} folders={folders} onClose={() => controller.setWorldVisible(false)} onScrollGesture={onScrollGesture}
-              live={{ state: st.status, detail: st.detail, label: statusLabel(st.status, st.detail), camera: st.cameraOn, gesture: st.gesture,
-                present: !st.away, eyesClosed: st.eyesClosed, paused: st.paused, suggestions: enabled, screenShared, now: snapshot.updated }} />
-          </div>
-        )}
         {pip.root ? (
           <div className="fixed z-40 flex flex-col items-center gap-2 rounded-xl border bg-white/90 p-3 text-xs shadow"
             style={{ left: orbPos.x - 40, top: orbPos.y + 20 }}>

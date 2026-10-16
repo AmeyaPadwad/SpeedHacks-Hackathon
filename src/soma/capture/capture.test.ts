@@ -47,6 +47,29 @@ describe("isExcluded", () => {
 // ----------------------------------------------------------------- inference
 
 describe("inferWindow", () => {
+
+  it("recognises modern VS Code from real OCR (no menu bar, dots dropped)", () => {
+    // Lines as tesseract read a live VS Code window with the menu bar hidden.
+    const lines: [string, number][] = [
+      ["[5] Explorer = ® main.py ® memoryfusionpy 2 X = % SOMA BUILD_", 0.02],
+      ["SOMA > > models > ® memory-fusionpy > ...", 0.05],
+      ["@| vam . 26 class MemoryFusion(nn.Module): =", 0.2],
+      ["61 q = self.query norm(state).unsqueeze(1) #[B, 1,", 0.3],
+      ["62 attended, weights = self.attn(q, kv, kv, ke", 0.32],
+      ["63 average attn weights=True)", 0.34],
+      ["64 attended, weights = attended[:, 0], weights[:,", 0.36],
+      ["65 gate = torch.sigmoid(self.gate(torch.cat([state", 0.38],
+      ["66 x = self.norm(state + self.dropout(gate * attende", 0.4],
+    ];
+    const w = inferWindow("monitor", "screen:0:0", lines.map(([t, y]) => el(t, [0.02, y, 0.9, y + 0.02])));
+    expect(w.appName).toBe("code");
+    expect(w.title).toBe("main.py - Visual Studio Code");
+  });
+
+  it("does not call a page of prose an editor", () => {
+    const lines = ["Suggestions", "No answered suggestions yet", "0 shown 0 done 0 not now 0 ignored", "Folders SOMA indexed"];
+    expect(inferWindow("monitor", "screen:0:0", lines.map((t, i) => el(t, [0.1, 0.2 + i * 0.05, 0.5, 0.22 + i * 0.05]))).appName).toBe("");
+  });
   it("reads a window title from the track label", () => {
     const w = inferWindow("window", "main.py - Pette - Visual Studio Code", []);
     expect(w).toMatchObject({ appName: "code", title: "main.py - Pette - Visual Studio Code", surface: "window" });
